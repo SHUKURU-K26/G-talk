@@ -1,15 +1,30 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
-  Search, Send, Mic, Smile, Paperclip, Phone, Video,
-  MoreVertical, Moon, Sun, Check, CheckCheck, Circle,
-  ChevronLeft, X, Star, Bell, BellOff, Archive, Trash2,
-  Pin, Edit3, Zap, Shield, Volume2, VolumeX, MessageCircle,
-  Play, Pause, Clock, ArrowDown, Users, Hash, Settings,
-  LogOut, ChevronDown, Filter, Plus, ImageIcon, FileText
+  Search, Send, Mic, Paperclip, Phone, Video,
+  MoreVertical, Moon, Sun, Check, CheckCheck,
+  ChevronLeft, X, Bell, BellOff, Archive, Edit3,
+  Zap, Shield, MessageCircle, Play, Pause,
+  ArrowDown, Users, Hash, Settings, Plus, ImageIcon,
+  Loader, AlertTriangle
 } from "lucide-react";
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── API Base ──────────────────────────────────────────────────────────────────
 const API = "http://localhost:8000";
+
+// ── Fetch users from backend (encrypted → decrypted) ─────────────────────────
+// Step 1: GET /api/users  → [{id:"u1", enc:"gAAA...gibberish"}, ...]
+// Step 2: GET /api/decrypt/u1 → {id:"u1", name:"Aiko Tanaka", role:..., ...}
+// MOCK_USERS is completely removed. Backend is the only source of truth.
+async function fetchAllUsers() {
+  const res  = await fetch(`${API}/api/users`, { headers: { "Content-Type": "application/json" } });
+  const data = await res.json();
+  const decrypted = await Promise.all(
+    data.users.map(({ id }) =>
+      fetch(`${API}/api/decrypt/${id}`, { headers: { "Content-Type": "application/json" } }).then(r => r.json())
+    )
+  );
+  return decrypted.map(u => ({ ...u, unread: 0 }));
+}
 
 async function apiFetch(path, opts = {}) {
   try {
@@ -18,46 +33,55 @@ async function apiFetch(path, opts = {}) {
   } catch { return null; }
 }
 
-function timeAgo(ts) {
-  return ts || "now";
+function openWS(userId, handlers) {
+  const ws = new WebSocket(`ws://localhost:8000/ws/${userId}`);
+  ws.onmessage = ({ data }) => {
+    const e = JSON.parse(data);
+    if (e.event === "new_message")  handlers.onMsg?.(e);
+    if (e.event === "typing")       handlers.onTyping?.(e);
+    if (e.event === "user_offline") handlers.onOffline?.(e);
+  };
+  ws.onerror = () => console.warn("[G-Chart WS] connection error");
+  return ws;
 }
 
-const EMOJI_LIST = ["❤️", "😂", "😮", "😢", "👍", "🔥", "🎉", "💯"];
+function wsSend(ws, payload) {
+  if (ws?.readyState === 1) ws.send(JSON.stringify(payload));
+}
 
-const MOCK_USERS = [
-  { id: "u1",  name: "Aiko Tanaka",    avatar: "AT", status: "online",  role: "Designer",        color: "#6EE7B7", bio: "Crafting pixels & dreams",    lastSeen: "now",     unread: 2 },
-  { id: "u2",  name: "Marcus Rivera",  avatar: "MR", status: "online",  role: "Engineer",        color: "#93C5FD", bio: "Code is my poetry",           lastSeen: "now",     unread: 1 },
-  { id: "u3",  name: "Zara Okonkwo",   avatar: "ZO", status: "away",    role: "Product Manager", color: "#FCA5A5", bio: "Building the future",          lastSeen: "5m ago",  unread: 0 },
-  { id: "u4",  name: "Liam Chen",      avatar: "LC", status: "online",  role: "Data Scientist",  color: "#C4B5FD", bio: "Turning data into stories",    lastSeen: "now",     unread: 3 },
-  { id: "u5",  name: "Sofia Petrov",   avatar: "SP", status: "offline", role: "Marketing",       color: "#FDE68A", bio: "Words that move people",       lastSeen: "2h ago",  unread: 0 },
-  { id: "u6",  name: "Darius Webb",    avatar: "DW", status: "online",  role: "DevOps",          color: "#6EE7F7", bio: "Deploying dreams daily",       lastSeen: "now",     unread: 0 },
-  { id: "u7",  name: "Nia Adeyemi",    avatar: "NA", status: "away",    role: "QA Engineer",     color: "#F9A8D4", bio: "Breaking things perfectly",    lastSeen: "12m ago", unread: 0 },
-  { id: "u8",  name: "Ethan Kowalski", avatar: "EK", status: "online",  role: "Backend Dev",     color: "#86EFAC", bio: "APIs are my canvas",           lastSeen: "now",     unread: 1 },
-  { id: "u9",  name: "Priya Sharma",   avatar: "PS", status: "offline", role: "UX Researcher",   color: "#FBB6CE", bio: "Understanding humans",         lastSeen: "1d ago",  unread: 0 },
-  { id: "u10", name: "Kai Nakamura",   avatar: "KN", status: "online",  role: "Frontend Dev",    color: "#A5F3FC", bio: "CSS sorcerer",                 lastSeen: "now",     unread: 0 },
-  { id: "u11", name: "Amara Diallo",   avatar: "AD", status: "away",    role: "Security",        color: "#DDD6FE", bio: "Keeping secrets safe",         lastSeen: "30m ago", unread: 0 },
-  { id: "u12", name: "Noah Fitzgerald",avatar: "NF", status: "online",  role: "Architect",       color: "#FED7AA", bio: "Designing at scale",           lastSeen: "now",     unread: 2 },
-  { id: "u13", name: "Yuki Shimizu",   avatar: "YS", status: "offline", role: "ML Engineer",     color: "#BAE6FD", bio: "Teaching machines to think",   lastSeen: "3h ago",  unread: 0 },
-];
-
+// ── Seed messages (shown while backend messages load) ─────────────────────────
 const SEED_MESSAGES = {
-  u1:  [{ id: "m1", sender: "u1",  text: "Hey! Just finished the new mockups 🎨", time: "10:02", reactions: {}, status: "seen", type: "text" }, { id: "m2", sender: "me",  text: "They look incredible, Aiko!", time: "10:05", reactions: { "❤️": true }, status: "seen", type: "text" }, { id: "m3", sender: "u1",  text: "Thanks! Ready for review whenever you are 😊", time: "10:06", reactions: {}, status: "seen", type: "text" }],
-  u2:  [{ id: "m4", sender: "me",  text: "Did the CI pipeline pass?", time: "09:45", reactions: {}, status: "seen", type: "text" }, { id: "m5", sender: "u2",  text: "Yes! All 247 tests green 🟢", time: "09:47", reactions: { "🔥": true }, status: "seen", type: "text" }, { id: "m6", sender: "u2",  text: "Deploying to staging now", time: "09:48", reactions: {}, status: "delivered", type: "text" }],
-  u4:  [{ id: "m7", sender: "u4",  text: "Check out this anomaly in the dataset 📊", time: "Yesterday", reactions: {}, status: "seen", type: "text" }, { id: "m8", sender: "me",  text: "Interesting spike around 3PM", time: "Yesterday", reactions: {}, status: "seen", type: "text" }, { id: "m9", sender: "u4",  text: "Exactly — looks like a timezone bug 🐛", time: "Yesterday", reactions: { "😮": true }, status: "seen", type: "text" }],
-  u6:  [{ id: "m10", sender: "u6", text: "Infra fully replicated across 3 availability zones ✅", time: "08:30", reactions: {}, status: "seen", type: "text" }, { id: "m11", sender: "me", text: "Zero downtime confirmed?", time: "08:32", reactions: {}, status: "seen", type: "text" }, { id: "m12", sender: "u6", text: "Zero. 99.99% uptime this quarter 🚀", time: "08:33", reactions: { "💯": true }, status: "seen", type: "text" }],
-  u8:  [{ id: "m13", sender: "me", text: "The new endpoint is live!", time: "11:00", reactions: {}, status: "seen", type: "text" }, { id: "m14", sender: "u8", text: "Rate limiting in place?", time: "11:02", reactions: {}, status: "seen", type: "text" }, { id: "m15", sender: "me", text: "Yes — 1000 req/min per user 🔒", time: "11:03", reactions: {}, status: "delivered", type: "text" }],
-  u12: [{ id: "m16", sender: "u12", text: "System design doc is ready for review 📄", time: "Mon", reactions: {}, status: "seen", type: "text" }, { id: "m17", sender: "me",  text: "Reading it now — brilliant architecture!", time: "Mon", reactions: { "🎉": true }, status: "seen", type: "text" }],
+  u1:  [{ id:"s1",  sender:"u1",  text:"Hey! Just finished the new mockups 🎨",      time:"10:02", reactions:{},          status:"seen",      type:"text" },
+        { id:"s2",  sender:"me",  text:"They look incredible!",                        time:"10:05", reactions:{"❤️":true}, status:"seen",      type:"text" },
+        { id:"s3",  sender:"u1",  text:"Thanks! Ready for review whenever you are 😊", time:"10:06", reactions:{},          status:"seen",      type:"text" }],
+  u2:  [{ id:"s4",  sender:"me",  text:"Did the CI pipeline pass?",                    time:"09:45", reactions:{},          status:"seen",      type:"text" },
+        { id:"s5",  sender:"u2",  text:"Yes! All 247 tests green 🟢",                  time:"09:47", reactions:{"🔥":true}, status:"seen",      type:"text" },
+        { id:"s6",  sender:"u2",  text:"Deploying to staging now",                     time:"09:48", reactions:{},          status:"delivered", type:"text" }],
+  u4:  [{ id:"s7",  sender:"u4",  text:"Check this anomaly in the dataset 📊",         time:"Yesterday", reactions:{},          status:"seen", type:"text" },
+        { id:"s8",  sender:"me",  text:"Interesting spike around 3PM",                 time:"Yesterday", reactions:{},          status:"seen", type:"text" },
+        { id:"s9",  sender:"u4",  text:"Exactly — timezone bug 🐛",                    time:"Yesterday", reactions:{"😮":true}, status:"seen", type:"text" }],
+  u6:  [{ id:"s10", sender:"u6",  text:"Infra replicated across 3 zones ✅",           time:"08:30", reactions:{},          status:"seen", type:"text" },
+        { id:"s11", sender:"me",  text:"Zero downtime confirmed?",                      time:"08:32", reactions:{},          status:"seen", type:"text" },
+        { id:"s12", sender:"u6",  text:"Zero. 99.99% uptime this quarter 🚀",          time:"08:33", reactions:{"💯":true}, status:"seen", type:"text" }],
+  u8:  [{ id:"s13", sender:"me",  text:"New endpoint is live!",                         time:"11:00", reactions:{}, status:"seen",      type:"text" },
+        { id:"s14", sender:"u8",  text:"Rate limiting in place?",                       time:"11:02", reactions:{}, status:"seen",      type:"text" },
+        { id:"s15", sender:"me",  text:"Yes — 1000 req/min per user 🔒",              time:"11:03", reactions:{}, status:"delivered", type:"text" }],
+  u12: [{ id:"s16", sender:"u12", text:"System design doc ready for review 📄",        time:"Mon", reactions:{},          status:"seen", type:"text" },
+        { id:"s17", sender:"me",  text:"Brilliant architecture, love it!",              time:"Mon", reactions:{"🎉":true}, status:"seen", type:"text" }],
 };
+
+const EMOJI_LIST   = ["❤️","😂","😮","😢","👍","🔥","🎉","💯","✅","🌿"];
+const AUTO_REPLIES = ["Got it! 👍","Sounds good to me!","Interesting…","Let me check on that","On it! 🚀","Perfect, thanks!","Will do ✅","Makes sense!","Noted 📝"];
 
 // ── StatusDot ─────────────────────────────────────────────────────────────────
 function StatusDot({ status, size = 10 }) {
-  const colors = { online: "#4ade80", away: "#fbbf24", offline: "#6b7280" };
+  const colors = { online:"#34d399", away:"#fbbf24", offline:"#4b5563" };
   return (
     <span style={{
-      display: "inline-block", width: size, height: size, borderRadius: "50%",
-      background: colors[status] || "#6b7280",
-      boxShadow: status === "online" ? `0 0 6px ${colors.online}` : "none",
-      flexShrink: 0
+      display:"inline-block", width:size, height:size, borderRadius:"50%",
+      background: colors[status] || "#4b5563",
+      boxShadow: status==="online" ? `0 0 7px ${colors.online}` : "none",
+      flexShrink:0,
     }} />
   );
 }
@@ -65,314 +89,143 @@ function StatusDot({ status, size = 10 }) {
 // ── Avatar ────────────────────────────────────────────────────────────────────
 function Avatar({ user, size = 44, showStatus = true }) {
   return (
-    <div style={{ position: "relative", flexShrink: 0 }}>
+    <div style={{ position:"relative", flexShrink:0 }}>
       <div style={{
-        width: size, height: size, borderRadius: "50%",
-        background: `linear-gradient(135deg, ${user.color}55, ${user.color}22)`,
-        border: `2px solid ${user.color}44`,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: size * 0.32, fontWeight: 700, color: user.color,
-        fontFamily: "'Sora', sans-serif", letterSpacing: "0.5px",
-        backdropFilter: "blur(8px)",
+        width:size, height:size, borderRadius:"50%",
+        background:`linear-gradient(135deg, ${user.color}55, ${user.color}22)`,
+        border:`2px solid ${user.color}44`,
+        display:"flex", alignItems:"center", justifyContent:"center",
+        fontSize:size*0.32, fontWeight:700, color:user.color,
+        letterSpacing:"0.5px", backdropFilter:"blur(8px)", flexShrink:0,
       }}>
         {user.avatar}
       </div>
       {showStatus && (
-        <div style={{ position: "absolute", bottom: 1, right: 1, background: "var(--bg-deep)", borderRadius: "50%", padding: 2 }}>
-          <StatusDot status={user.status} size={9} />
+        <div style={{ position:"absolute", bottom:1, right:1, background:"#030f0a", borderRadius:"50%", padding:2 }}>
+          <StatusDot status={user.status} size={size > 36 ? 10 : 8} />
         </div>
       )}
     </div>
   );
 }
 
-// ── VoiceNoteUI ───────────────────────────────────────────────────────────────
+// ── VoiceNote ─────────────────────────────────────────────────────────────────
 function VoiceNote({ duration = "0:23" }) {
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
-  const bars = Array.from({ length: 28 }, (_, i) => 20 + Math.sin(i * 0.8) * 15 + Math.random() * 20);
-
+  const bars = useRef(Array.from({ length:28 }, (_,i) => 18 + Math.sin(i*0.85)*14 + (i%3)*6)).current;
   useEffect(() => {
-    if (playing) {
-      const iv = setInterval(() => setProgress(p => { if (p >= 100) { setPlaying(false); return 0; } return p + 2; }), 80);
-      return () => clearInterval(iv);
-    }
+    if (!playing) return;
+    const iv = setInterval(() => setProgress(p => { if (p>=100){setPlaying(false);return 0;} return p+1.8; }), 80);
+    return () => clearInterval(iv);
   }, [playing]);
-
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 180 }}>
-      <button onClick={() => setPlaying(!playing)} style={{
-        width: 34, height: 34, borderRadius: "50%", border: "none",
-        background: "rgba(129,140,248,0.3)", color: "#a5b4fc",
-        display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
-        flexShrink: 0
-      }}>
-        {playing ? <Pause size={14} /> : <Play size={14} />}
+    <div style={{ display:"flex", alignItems:"center", gap:10, minWidth:190 }}>
+      <button onClick={()=>setPlaying(p=>!p)} style={{ width:34,height:34,borderRadius:"50%",border:"none",flexShrink:0,background:"rgba(52,211,153,0.18)",color:"#34d399",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer" }}>
+        {playing ? <Pause size={13}/> : <Play size={13}/>}
       </button>
-      <div style={{ display: "flex", alignItems: "center", gap: 2, flex: 1 }}>
-        {bars.map((h, i) => (
-          <div key={i} style={{
-            width: 3, height: Math.max(4, (h / 55) * 28), borderRadius: 2,
-            background: i / bars.length < progress / 100 ? "#818cf8" : "rgba(255,255,255,0.2)",
-            transition: "background 0.1s"
-          }} />
+      <div style={{ display:"flex", alignItems:"center", gap:2, flex:1 }}>
+        {bars.map((h,i) => (
+          <div key={i} style={{ width:3, borderRadius:2, height:Math.max(4,(h/55)*28), background: i/bars.length < progress/100 ? "linear-gradient(to top,#059669,#34d399)" : "rgba(52,211,153,0.18)", transition:"background 0.1s" }} />
         ))}
       </div>
-      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", flexShrink: 0 }}>{duration}</span>
-    </div>
-  );
-}
-
-// ── EmojiPicker ───────────────────────────────────────────────────────────────
-function EmojiPicker({ onSelect, onClose }) {
-  return (
-    <div style={{
-      position: "absolute", bottom: "100%", right: 0, marginBottom: 8,
-      background: "rgba(15,15,35,0.95)", backdropFilter: "blur(20px)",
-      border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16,
-      padding: "10px 12px", display: "flex", gap: 6, zIndex: 100,
-      boxShadow: "0 20px 60px rgba(0,0,0,0.5)"
-    }}>
-      {EMOJI_LIST.map(e => (
-        <button key={e} onClick={() => { onSelect(e); onClose(); }} style={{
-          background: "none", border: "none", cursor: "pointer",
-          fontSize: 20, borderRadius: 8, padding: "4px 6px",
-          transition: "transform 0.15s",
-        }}
-          onMouseEnter={ev => ev.target.style.transform = "scale(1.3)"}
-          onMouseLeave={ev => ev.target.style.transform = "scale(1)"}
-        >{e}</button>
-      ))}
+      <span style={{ fontSize:11, color:"rgba(167,243,208,0.4)", flexShrink:0 }}>{duration}</span>
     </div>
   );
 }
 
 // ── MessageBubble ─────────────────────────────────────────────────────────────
 function MessageBubble({ msg, user, onReact, isMe }) {
-  const [hovered, setHovered] = useState(false);
+  const [hovered, setHovered]   = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
-
-  const bubbleStyle = isMe ? {
-    background: "linear-gradient(135deg, rgba(99,102,241,0.6), rgba(129,140,248,0.4))",
-    border: "1px solid rgba(129,140,248,0.3)",
-    borderRadius: "20px 4px 20px 20px",
-    marginLeft: "auto",
-  } : {
-    background: "rgba(255,255,255,0.05)",
-    border: "1px solid rgba(255,255,255,0.08)",
-    borderRadius: "4px 20px 20px 20px",
-    marginRight: "auto",
-  };
-
   const reactions = Object.keys(msg.reactions || {});
-
   return (
-    <div style={{
-      display: "flex", flexDirection: isMe ? "row-reverse" : "row",
-      alignItems: "flex-end", gap: 8, maxWidth: "72%",
-      marginLeft: isMe ? "auto" : 0,
-      animation: "fadeUp 0.25s ease",
-      position: "relative",
-    }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => { setHovered(false); setShowEmoji(false); }}
+    <div style={{ display:"flex", flexDirection:isMe?"row-reverse":"row", alignItems:"flex-end", gap:8, maxWidth:"72%", marginLeft:isMe?"auto":0, animation:"fadeUp 0.25s ease", position:"relative" }}
+      onMouseEnter={()=>setHovered(true)}
+      onMouseLeave={()=>{setHovered(false);setShowEmoji(false);}}
     >
       {!isMe && <Avatar user={user} size={30} showStatus={false} />}
-
-      <div style={{ position: "relative" }}>
+      <div style={{ position:"relative" }}>
         <div style={{
-          ...bubbleStyle,
-          backdropFilter: "blur(12px)",
-          padding: msg.type === "voice" ? "10px 14px" : "10px 14px",
-          fontSize: 14, lineHeight: 1.5, color: "rgba(255,255,255,0.9)",
-          boxShadow: isMe ? "0 4px 20px rgba(99,102,241,0.2)" : "0 4px 20px rgba(0,0,0,0.2)"
+          backdropFilter:"blur(12px)", padding:"10px 14px", fontSize:14, lineHeight:1.5,
+          color:"rgba(255,255,255,0.9)",
+          ...(isMe
+            ? { background:"linear-gradient(135deg,rgba(5,150,105,0.6),rgba(52,211,153,0.4))", border:"1px solid rgba(52,211,153,0.3)", borderRadius:"20px 4px 20px 20px", marginLeft:"auto", boxShadow:"0 4px 20px rgba(16,185,129,0.2)" }
+            : { background:"rgba(6,78,59,0.28)", border:"1px solid rgba(52,211,153,0.12)", borderRadius:"4px 20px 20px 20px", marginRight:"auto", boxShadow:"0 4px 20px rgba(0,0,0,0.2)" })
         }}>
-          {msg.type === "voice" ? <VoiceNote /> : <span>{msg.text}</span>}
-
-          <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4, justifyContent: isMe ? "flex-end" : "flex-start" }}>
-            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{msg.time}</span>
+          {msg.type === "voice" ? <VoiceNote duration={msg.duration}/> : <span>{msg.text}</span>}
+          <div style={{ display:"flex", alignItems:"center", gap:4, marginTop:4, justifyContent:isMe?"flex-end":"flex-start" }}>
+            <span style={{ fontSize:10, color:"rgba(167,243,208,0.38)" }}>{msg.time}</span>
             {isMe && (
-              msg.status === "seen" ? <CheckCheck size={12} color="#818cf8" /> :
-              msg.status === "delivered" ? <CheckCheck size={12} color="rgba(255,255,255,0.35)" /> :
-              <Check size={12} color="rgba(255,255,255,0.25)" />
+              msg.status==="seen"      ? <CheckCheck size={12} color="#34d399"/> :
+              msg.status==="delivered" ? <CheckCheck size={12} color="rgba(167,243,208,0.38)"/> :
+                                         <Check size={12} color="rgba(167,243,208,0.25)"/>
             )}
           </div>
         </div>
-
         {reactions.length > 0 && (
-          <div style={{
-            position: "absolute", bottom: -12, right: isMe ? 8 : "auto", left: isMe ? "auto" : 8,
-            display: "flex", gap: 2, background: "rgba(15,15,35,0.8)",
-            border: "1px solid rgba(255,255,255,0.1)", borderRadius: 20, padding: "2px 6px",
-            backdropFilter: "blur(8px)", zIndex: 1
-          }}>
-            {reactions.map(e => <span key={e} style={{ fontSize: 12 }}>{e}</span>)}
+          <div style={{ position:"absolute", bottom:-12, right:isMe?8:"auto", left:isMe?"auto":8, display:"flex", gap:2, background:"rgba(3,15,10,0.85)", border:"1px solid rgba(52,211,153,0.18)", borderRadius:20, padding:"2px 6px", backdropFilter:"blur(8px)", zIndex:1 }}>
+            {reactions.map(e => <span key={e} style={{ fontSize:12 }}>{e}</span>)}
           </div>
         )}
-
         {hovered && (
-          <div style={{
-            position: "absolute", top: "50%", transform: "translateY(-50%)",
-            [isMe ? "left" : "right"]: "100%",
-            [isMe ? "paddingRight" : "paddingLeft"]: 8,
-            display: "flex", gap: 4, alignItems: "center",
-          }}>
-            <div style={{ position: "relative" }}>
-              <button onClick={() => setShowEmoji(!showEmoji)} style={{
-                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: 10, padding: "4px 8px", cursor: "pointer", color: "rgba(255,255,255,0.6)",
-                display: "flex", alignItems: "center", fontSize: 14, backdropFilter: "blur(8px)"
-              }}>😊</button>
-              {showEmoji && <EmojiPicker onSelect={(e) => onReact(msg.id, e)} onClose={() => setShowEmoji(false)} />}
+          <div style={{ position:"absolute", top:"50%", transform:"translateY(-50%)", [isMe?"left":"right"]:"100%", [isMe?"paddingRight":"paddingLeft"]:8, display:"flex", gap:4, alignItems:"center" }}>
+            <div style={{ position:"relative" }}>
+              <button onClick={()=>setShowEmoji(p=>!p)} style={{ background:"rgba(6,78,59,0.5)", border:"1px solid rgba(52,211,153,0.2)", borderRadius:10, padding:"4px 8px", cursor:"pointer", fontSize:14, backdropFilter:"blur(8px)" }}>😊</button>
+              {showEmoji && (
+                <div style={{ position:"absolute", bottom:"100%", right:0, marginBottom:8, background:"rgba(3,15,10,0.97)", backdropFilter:"blur(24px)", border:"1px solid rgba(52,211,153,0.22)", borderRadius:16, padding:"10px 12px", display:"flex", gap:6, zIndex:200, boxShadow:"0 20px 60px rgba(0,0,0,0.6)", animation:"fadeUp 0.18s ease" }}>
+                  {EMOJI_LIST.map(e => (
+                    <button key={e} onClick={()=>{onReact(msg.id,e);setShowEmoji(false);}} style={{ background:"none",border:"none",cursor:"pointer",fontSize:19,borderRadius:8,padding:"3px 5px",transition:"transform 0.15s" }}
+                      onMouseEnter={ev=>ev.currentTarget.style.transform="scale(1.35)"}
+                      onMouseLeave={ev=>ev.currentTarget.style.transform="scale(1)"}
+                    >{e}</button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-// ── UserCard (left panel) ─────────────────────────────────────────────────────
-function UserCard({ user, active, onClick, lastMsg }) {
-  return (
-    <div onClick={onClick} style={{
-      display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
-      borderRadius: 16, cursor: "pointer", position: "relative",
-      background: active ? "rgba(129,140,248,0.15)" : "transparent",
-      border: active ? "1px solid rgba(129,140,248,0.25)" : "1px solid transparent",
-      transition: "all 0.2s", backdropFilter: active ? "blur(8px)" : "none",
-      marginBottom: 2,
-    }}
-      onMouseEnter={ev => { if (!active) { ev.currentTarget.style.background = "rgba(255,255,255,0.04)"; ev.currentTarget.style.border = "1px solid rgba(255,255,255,0.06)"; }}}
-      onMouseLeave={ev => { if (!active) { ev.currentTarget.style.background = "transparent"; ev.currentTarget.style.border = "1px solid transparent"; }}}
-    >
-      <Avatar user={user} size={48} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontWeight: 600, fontSize: 14, color: "rgba(255,255,255,0.9)", fontFamily: "'Sora',sans-serif" }}>
-            {user.name}
-          </span>
-          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>{user.lastSeen}</span>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
-          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 140 }}>
-            {lastMsg || user.bio}
-          </span>
-          {user.unread > 0 && (
-            <div style={{
-              background: "linear-gradient(135deg, #6366f1, #818cf8)",
-              color: "#fff", borderRadius: 20, minWidth: 20, height: 20,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 10, fontWeight: 700, padding: "0 6px", flexShrink: 0
-            }}>{user.unread}</div>
-          )}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
-          <StatusDot status={user.status} size={7} />
-          <span style={{ fontSize: 10, color: user.status === "online" ? "#4ade80" : "rgba(255,255,255,0.3)" }}>
-            {user.status}
-          </span>
-          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.2)", marginLeft: 4 }}>• {user.role}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── SearchBar ─────────────────────────────────────────────────────────────────
-function SearchBar({ value, onChange, placeholder = "Search…" }) {
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 10,
-      background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)",
-      borderRadius: 14, padding: "9px 14px", backdropFilter: "blur(8px)",
-    }}>
-      <Search size={15} color="rgba(255,255,255,0.3)" />
-      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={{
-        background: "none", border: "none", outline: "none", flex: 1,
-        color: "rgba(255,255,255,0.8)", fontSize: 13, fontFamily: "'DM Sans',sans-serif",
-      }} />
-      {value && <button onClick={() => onChange("")} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.3)", display: "flex" }}><X size={13} /></button>}
-    </div>
-  );
-}
-
-// ── TypingIndicator ───────────────────────────────────────────────────────────
-function TypingIndicator({ user }) {
-  return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 8, padding: "0 0 4px" }}>
-      <Avatar user={user} size={30} showStatus={false} />
-      <div style={{
-        background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: "4px 20px 20px 20px", padding: "10px 14px",
-        display: "flex", alignItems: "center", gap: 4
-      }}>
-        {[0,1,2].map(i => (
-          <div key={i} style={{
-            width: 7, height: 7, borderRadius: "50%",
-            background: "rgba(129,140,248,0.6)",
-            animation: `typingBounce 1s ease ${i * 0.18}s infinite`
-          }} />
-        ))}
-      </div>
-      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginBottom: 4 }}>{user.name} is typing…</span>
     </div>
   );
 }
 
 // ── ProfilePanel ──────────────────────────────────────────────────────────────
-function ProfilePanel({ user, onClose }) {
+function ProfilePanel({ user, onClose, dark }) {
   return (
-    <div style={{
-      position: "absolute", right: 0, top: 0, bottom: 0, width: 300,
-      background: "rgba(10,10,28,0.92)", backdropFilter: "blur(30px)",
-      borderLeft: "1px solid rgba(255,255,255,0.06)", zIndex: 20,
-      display: "flex", flexDirection: "column", padding: 24,
-      animation: "slideLeft 0.25s ease",
-    }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-        <span style={{ fontWeight: 700, fontFamily: "'Sora',sans-serif", color: "rgba(255,255,255,0.9)" }}>Profile</span>
-        <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.4)", display: "flex" }}><X size={18} /></button>
+    <div style={{ position:"absolute", right:0, top:0, bottom:0, width:300, background:dark?"rgba(3,15,10,0.96)":"rgba(240,253,244,0.96)", backdropFilter:"blur(30px)", borderLeft:"1px solid rgba(52,211,153,0.1)", zIndex:20, display:"flex", flexDirection:"column", padding:24, animation:"slideRight 0.25s ease" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:24 }}>
+        <span style={{ fontWeight:700, color:dark?"rgba(255,255,255,0.9)":"rgba(2,44,34,0.9)" }}>Profile</span>
+        <button onClick={onClose} style={{ background:"rgba(6,78,59,0.3)", border:"1px solid rgba(52,211,153,0.15)", borderRadius:10, width:32, height:32, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"rgba(167,243,208,0.5)" }}><X size={16}/></button>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, marginBottom: 24 }}>
-        <Avatar user={user} size={80} />
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontWeight: 700, fontSize: 18, fontFamily: "'Sora',sans-serif", color: "rgba(255,255,255,0.95)" }}>{user.name}</div>
-          <div style={{ fontSize: 12, color: user.color, marginTop: 2 }}>{user.role}</div>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>{user.bio}</div>
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:12, marginBottom:24 }}>
+        <Avatar user={user} size={80}/>
+        <div style={{ textAlign:"center" }}>
+          <div style={{ fontWeight:700, fontSize:18, color:dark?"rgba(255,255,255,0.95)":"rgba(2,44,34,0.9)" }}>{user.name}</div>
+          <div style={{ fontSize:12, color:user.color, marginTop:2 }}>{user.role}</div>
+          <div style={{ fontSize:12, color:"rgba(167,243,208,0.45)", marginTop:4 }}>{user.bio}</div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <StatusDot status={user.status} size={9} />
-          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{user.status} · Last seen {user.lastSeen}</span>
+        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+          <StatusDot status={user.status} size={9}/>
+          <span style={{ fontSize:12, color:"rgba(167,243,208,0.5)" }}>{user.status} · Last seen {user.lastSeen}</span>
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        {[{ icon: Phone, label: "Call" }, { icon: Video, label: "Video" }, { icon: Bell, label: "Mute" }, { icon: Archive, label: "Archive" }].map(({ icon: Icon, label }) => (
-          <button key={label} style={{
-            background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)",
-            borderRadius: 14, padding: "12px 8px", cursor: "pointer",
-            display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
-            color: "rgba(255,255,255,0.6)", fontSize: 12, fontFamily: "'DM Sans',sans-serif",
-            transition: "all 0.2s",
-          }}
-            onMouseEnter={ev => ev.currentTarget.style.background = "rgba(129,140,248,0.1)"}
-            onMouseLeave={ev => ev.currentTarget.style.background = "rgba(255,255,255,0.04)"}
-          >
-            <Icon size={18} /> {label}
-          </button>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+        {[[Phone,"Call"],[Video,"Video"],[Bell,"Mute"],[Archive,"Archive"]].map(([Icon,label]) => (
+          <button key={label} style={{ background:"rgba(6,78,59,0.3)", border:"1px solid rgba(52,211,153,0.12)", borderRadius:14, padding:"12px 8px", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:6, color:"rgba(167,243,208,0.6)", fontSize:12, transition:"all 0.2s" }}
+            onMouseEnter={ev=>{ev.currentTarget.style.background="rgba(52,211,153,0.12)";ev.currentTarget.style.color="#34d399";}}
+            onMouseLeave={ev=>{ev.currentTarget.style.background="rgba(6,78,59,0.3)";ev.currentTarget.style.color="rgba(167,243,208,0.6)";}}
+          ><Icon size={18}/>{label}</button>
         ))}
       </div>
-      <div style={{ marginTop: 20, borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 20 }}>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.08em" }}>Media & Files</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
-          {[...Array(6)].map((_, i) => (
-            <div key={i} style={{
-              aspectRatio: "1", borderRadius: 10,
-              background: `linear-gradient(135deg, ${user.color}22, ${user.color}11)`,
-              border: `1px solid ${user.color}22`, display: "flex", alignItems: "center", justifyContent: "center"
-            }}>
-              <ImageIcon size={14} color={user.color} />
-            </div>
+      <div style={{ marginTop:20, borderTop:"1px solid rgba(52,211,153,0.08)", paddingTop:20 }}>
+        <div style={{ fontSize:11, color:"rgba(167,243,208,0.35)", marginBottom:10, textTransform:"uppercase", letterSpacing:"0.08em" }}>Media & Files</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6 }}>
+          {[...Array(6)].map((_,i) => (
+            <div key={i} style={{ aspectRatio:"1", borderRadius:10, background:`linear-gradient(135deg,${user.color}22,${user.color}11)`, border:`1px solid ${user.color}22`, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}
+              onMouseEnter={ev=>ev.currentTarget.style.background=`${user.color}28`}
+              onMouseLeave={ev=>ev.currentTarget.style.background=`linear-gradient(135deg,${user.color}22,${user.color}11)`}
+            ><ImageIcon size={14} color={user.color}/></div>
           ))}
         </div>
       </div>
@@ -380,70 +233,88 @@ function ProfilePanel({ user, onClose }) {
   );
 }
 
-// ── ScrollToBottom ─────────────────────────────────────────────────────────────
-function ScrollToBottomBtn({ onClick }) {
-  return (
-    <button onClick={onClick} style={{
-      position: "absolute", bottom: 90, right: 24,
-      background: "rgba(99,102,241,0.8)", border: "1px solid rgba(129,140,248,0.3)",
-      borderRadius: "50%", width: 40, height: 40, cursor: "pointer",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      backdropFilter: "blur(10px)", boxShadow: "0 4px 20px rgba(99,102,241,0.4)",
-      color: "#fff", zIndex: 10, animation: "fadeUp 0.2s ease"
-    }}>
-      <ArrowDown size={16} />
-    </button>
-  );
-}
+// ══════════════════════════════════════════════════════════════════════════════
+// MAIN APP
+// ══════════════════════════════════════════════════════════════════════════════
+export default function GChart() {
 
-// ── Main App ──────────────────────────────────────────────────────────────────
-export default function GreenTalk() {
-  const [dark, setDark] = useState(true);
-  const [users] = useState(MOCK_USERS);
-  const [messages, setMessages] = useState({ ...SEED_MESSAGES });
-  const [activeUser, setActiveUser] = useState(null);
-  const [input, setInput] = useState("");
-  const [search, setSearch] = useState("");
-  const [msgSearch, setMsgSearch] = useState("");
+  const [dark, setDark]                   = useState(true);
+  // users come from backend fetch — NO hardcoded MOCK_USERS
+  const [users, setUsers]                 = useState([]);
+  const [loadingUsers, setLoadingUsers]   = useState(true);
+  const [usersError, setUsersError]       = useState(null);
+  const [messages, setMessages]           = useState({ ...SEED_MESSAGES });
+  const [activeUser, setActiveUser]       = useState(null);
+  const [input, setInput]                 = useState("");
+  const [search, setSearch]               = useState("");
+  const [msgSearch, setMsgSearch]         = useState("");
   const [showMsgSearch, setShowMsgSearch] = useState(false);
-  const [typing, setTyping] = useState(false);
-  const [isTyping, setIsTyping] = useState(false);
-  const [showProfile, setShowProfile] = useState(false);
+  const [isTyping, setIsTyping]           = useState(false);
+  const [showProfile, setShowProfile]     = useState(false);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [mobileView, setMobileView] = useState("list"); // "list" | "chat"
-  const [filter, setFilter] = useState("all");
-  const [sidebarTab, setSidebarTab] = useState("chats");
+  const [isRecording, setIsRecording]     = useState(false);
+  const [mobileView, setMobileView]       = useState("list");
+  const [filter, setFilter]               = useState("all");
+  const [sidebarTab, setSidebarTab]       = useState("chats");
   const [notifications, setNotifications] = useState(true);
+
   const messagesEndRef = useRef(null);
-  const chatBodyRef = useRef(null);
-  const inputRef = useRef(null);
-  const typingTimerRef = useRef(null);
+  const chatBodyRef    = useRef(null);
+  const inputRef       = useRef(null);
+  const typingTimer    = useRef(null);
+  const wsRef          = useRef(null);
 
-  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+  // ── FETCH USERS FROM BACKEND ON MOUNT ─────────────────────────────────────
+  // This replaces MOCK_USERS entirely.
+  // Network tab will show: GET /api/users → [{id, enc}...]  (encrypted)
+  // Then: GET /api/decrypt/u1 → real user data per user
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoadingUsers(true);
+        setUsersError(null);
+        const fetched = await fetchAllUsers();
+        setUsers(fetched);
+      } catch (err) {
+        setUsersError("Cannot connect to backend. Is FastAPI running on port 8000?");
+      } finally {
+        setLoadingUsers(false);
+      }
+    })();
+  }, []);
 
+  // ── WEBSOCKET for real-time events ────────────────────────────────────────
+  useEffect(() => {
+    wsRef.current = openWS("me", {
+      onMsg: ({ message, from }) => {
+        setMessages(p => ({ ...p, [from]: [...(p[from]||[]), message] }));
+        setUsers(p => p.map(u => u.id===from ? {...u, unread:(u.unread||0)+1} : u));
+      },
+      onTyping: ({ from, isTyping: t }) => {
+        setActiveUser(curr => { if (curr?.id===from) setIsTyping(t); return curr; });
+      },
+      onOffline: ({ user_id }) => {
+        setUsers(p => p.map(u => u.id===user_id ? {...u, status:"offline"} : u));
+      },
+    });
+    return () => wsRef.current?.close();
+  }, []);
+
+  // ── Derived state ─────────────────────────────────────────────────────────
   const filteredUsers = users.filter(u => {
-    const matchSearch = u.name.toLowerCase().includes(search.toLowerCase()) || u.role.toLowerCase().includes(search.toLowerCase());
-    if (filter === "online") return matchSearch && u.status === "online";
-    if (filter === "unread") return matchSearch && u.unread > 0;
-    return matchSearch;
+    const m = u.name.toLowerCase().includes(search.toLowerCase()) || u.role?.toLowerCase().includes(search.toLowerCase());
+    if (filter==="online") return m && u.status==="online";
+    if (filter==="unread") return m && u.unread>0;
+    return m;
   });
 
-  const currentMsgs = activeUser ? (messages[activeUser.id] || []) : [];
+  const currentMsgs  = activeUser ? (messages[activeUser.id]||[]) : [];
+  const filteredMsgs = msgSearch ? currentMsgs.filter(m=>m.text?.toLowerCase().includes(msgSearch.toLowerCase())) : currentMsgs;
+  const getUserById  = id => users.find(u=>u.id===id) || { name:"You", avatar:"YO", color:"#34d399", status:"online", id:"me" };
+  const lastMsgFor   = uid => { const ms=messages[uid]||[]; const l=ms[ms.length-1]; return l?(l.sender==="me"?`You: ${l.text}`:l.text):""; };
 
-  const filteredMsgs = msgSearch
-    ? currentMsgs.filter(m => m.text?.toLowerCase().includes(msgSearch.toLowerCase()))
-    : currentMsgs;
-
-  const lastMsgFor = (uid) => {
-    const msgs = messages[uid] || [];
-    const last = msgs[msgs.length - 1];
-    return last ? (last.sender === "me" ? `You: ${last.text}` : last.text) : "";
-  };
-
-  const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-
+  const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior:"smooth" });
   useEffect(() => { scrollToBottom(); }, [currentMsgs.length, activeUser]);
 
   const handleScroll = () => {
@@ -452,394 +323,404 @@ export default function GreenTalk() {
     setShowScrollBtn(el.scrollHeight - el.scrollTop - el.clientHeight > 200);
   };
 
-  // Simulate typing indicator from other user
-  const simulateTyping = () => {
-    setIsTyping(true);
-    setTimeout(() => setIsTyping(false), 2500);
+  // ── Select user + fetch their messages from backend ───────────────────────
+  const selectUser = async (u) => {
+    setActiveUser(u);
+    setInput("");
+    setShowProfile(false);
+    setMobileView("chat");
+    setUsers(p => p.map(x => x.id===u.id ? {...x, unread:0} : x));
+    if (!messages[u.id]) {
+      try {
+        const { messages: enc } = await apiFetch(`/api/messages/${u.id}`);
+        if (enc?.length) {
+          const { messages: dec } = await apiFetch(`/api/messages/${u.id}/decrypt`, { method:"POST", body:JSON.stringify({ messages:enc }) });
+          if (dec?.length) setMessages(p => ({...p, [u.id]: dec}));
+        }
+      } catch { /* fall back to seed */ }
+    }
   };
 
-  const sendMessage = () => {
+  // ── Send message ──────────────────────────────────────────────────────────
+  const sendMessage = async () => {
     if (!input.trim() || !activeUser) return;
-    const msg = {
-      id: `m_${Date.now()}`, sender: "me", text: input.trim(),
-      time: new Date().toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" }),
-      reactions: {}, status: "sent", type: "text"
-    };
-    setMessages(prev => ({
-      ...prev,
-      [activeUser.id]: [...(prev[activeUser.id] || []), msg]
-    }));
+    const msg = { id:`opt_${Date.now()}`, sender:"me", text:input.trim(), time:new Date().toLocaleTimeString("en",{hour:"2-digit",minute:"2-digit"}), reactions:{}, status:"sent", type:"text" };
+    setMessages(p => ({...p, [activeUser.id]:[...(p[activeUser.id]||[]),msg]}));
     setInput("");
-    setTimeout(() => simulateTyping(), 800);
+    apiFetch(`/api/send/${activeUser.id}`, { method:"POST", body:JSON.stringify({text:msg.text, type:"text"}) });
+    setTimeout(() => setIsTyping(true), 800);
     setTimeout(() => {
-      const replies = [
-        "Got it! 👍", "Sounds good to me!", "Interesting…",
-        "Let me check on that", "On it! 🚀", "Perfect, thanks!", "Will do ✅"
-      ];
-      const reply = {
-        id: `r_${Date.now()}`, sender: activeUser.id,
-        text: replies[Math.floor(Math.random() * replies.length)],
-        time: new Date().toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" }),
-        reactions: {}, status: "delivered", type: "text"
-      };
-      setMessages(prev => ({ ...prev, [activeUser.id]: [...(prev[activeUser.id] || []), reply] }));
+      setIsTyping(false);
+      const reply = { id:`rep_${Date.now()}`, sender:activeUser.id, text:AUTO_REPLIES[Math.floor(Math.random()*AUTO_REPLIES.length)], time:new Date().toLocaleTimeString("en",{hour:"2-digit",minute:"2-digit"}), reactions:{}, status:"delivered", type:"text" };
+      setMessages(p => ({...p, [activeUser.id]:[...(p[activeUser.id]||[]),reply]}));
     }, 3500);
   };
 
   const sendVoiceNote = () => {
     if (!activeUser) return;
     setIsRecording(false);
-    const durations = ["0:07", "0:12", "0:23", "0:45", "1:02"];
-    const msg = {
-      id: `v_${Date.now()}`, sender: "me",
-      text: "", time: new Date().toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" }),
-      reactions: {}, status: "sent", type: "voice",
-      duration: durations[Math.floor(Math.random() * durations.length)]
-    };
-    setMessages(prev => ({ ...prev, [activeUser.id]: [...(prev[activeUser.id] || []), msg] }));
+    const durations = ["0:07","0:12","0:23","0:45","1:02"];
+    const msg = { id:`v_${Date.now()}`, sender:"me", text:"", time:new Date().toLocaleTimeString("en",{hour:"2-digit",minute:"2-digit"}), reactions:{}, status:"sent", type:"voice", duration:durations[Math.floor(Math.random()*5)] };
+    setMessages(p => ({...p, [activeUser.id]:[...(p[activeUser.id]||[]),msg]}));
   };
 
-  const handleReact = (msgId, emoji) => {
-    setMessages(prev => ({
-      ...prev,
-      [activeUser.id]: (prev[activeUser.id] || []).map(m =>
-        m.id === msgId ? { ...m, reactions: { ...m.reactions, [emoji]: !m.reactions[emoji] || undefined } } : m
-      ).map(m => ({ ...m, reactions: Object.fromEntries(Object.entries(m.reactions).filter(([, v]) => v)) }))
-    }));
+  const handleReact = async (msgId, emoji) => {
+    setMessages(p => ({...p, [activeUser.id]:(p[activeUser.id]||[]).map(m => {
+      if (m.id!==msgId) return m;
+      const r = {...m.reactions};
+      if (r[emoji]) delete r[emoji]; else r[emoji]=true;
+      return {...m, reactions:r};
+    })}));
+    apiFetch(`/api/react/${msgId}`, { method:"POST", body:JSON.stringify({emoji, other_id:activeUser.id}) });
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-    clearTimeout(typingTimerRef.current);
-    setTyping(true);
-    typingTimerRef.current = setTimeout(() => setTyping(false), 1500);
+    if (e.key==="Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    wsSend(wsRef.current, {event:"typing", to:activeUser?.id, isTyping:true});
+    clearTimeout(typingTimer.current);
+    typingTimer.current = setTimeout(() => wsSend(wsRef.current, {event:"typing", to:activeUser?.id, isTyping:false}), 1500);
   };
 
-  const getUserById = (id) => users.find(u => u.id === id) || { name: "You", avatar: "YO", color: "#818cf8", status: "online", id: "me" };
+  // ── Theme colours ─────────────────────────────────────────────────────────
+  const T = {
+    sidebar:  dark ? "rgba(3,15,10,0.82)"   : "rgba(236,253,245,0.82)",
+    chat:     dark ? "rgba(3,12,8,0.45)"    : "rgba(240,253,244,0.45)",
+    header:   dark ? "rgba(3,15,10,0.72)"   : "rgba(220,252,231,0.72)",
+    input:    dark ? "rgba(3,15,10,0.75)"   : "rgba(220,252,231,0.75)",
+    text:     dark ? "rgba(236,253,245,0.95)": "rgba(2,44,34,0.9)",
+    sub:      dark ? "rgba(167,243,208,0.6)" : "rgba(4,120,87,0.7)",
+    muted:    dark ? "rgba(110,231,183,0.32)": "rgba(4,120,87,0.38)",
+    border:   dark ? "rgba(52,211,153,0.12)" : "rgba(5,150,105,0.2)",
+    borderS:  dark ? "rgba(52,211,153,0.3)"  : "rgba(5,150,105,0.45)",
+    glass:    dark ? "rgba(6,78,59,0.28)"    : "rgba(209,250,229,0.55)",
+  };
 
-  // CSS-in-JS
-  const styles = `
-    @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap');
-    :root {
-      --bg-deep: ${dark ? "#08081a" : "#f0f2ff"};
-      --bg-glass: ${dark ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.6)"};
-      --border: ${dark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.08)"};
-      --text: ${dark ? "rgba(255,255,255,0.9)" : "rgba(0,0,20,0.85)"};
-      --subtext: ${dark ? "rgba(255,255,255,0.4)" : "rgba(0,0,20,0.45)"};
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'DM Sans', sans-serif; }
-    ::-webkit-scrollbar { width: 4px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(129,140,248,0.25); border-radius: 4px; }
-    @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
-    @keyframes slideLeft { from { transform:translateX(100%); } to { transform:translateX(0); } }
-    @keyframes typingBounce { 0%,60%,100% { transform:translateY(0); } 30% { transform:translateY(-8px); } }
-    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
-    @keyframes meshAnim { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
-    @keyframes glow { 0%,100% { box-shadow: 0 0 20px rgba(99,102,241,0.3); } 50% { box-shadow: 0 0 40px rgba(99,102,241,0.6); } }
-    input::placeholder { color: rgba(255,255,255,0.25); }
-    textarea::placeholder { color: rgba(255,255,255,0.25); }
-    @media (max-width: 768px) {
-      .sidebar { width: 100% !important; display: ${mobileView === "list" ? "flex" : "none"} !important; }
-      .chatpanel { display: ${mobileView === "chat" ? "flex" : "none"} !important; }
+  // ── CSS animations ────────────────────────────────────────────────────────
+  const css = `
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+    *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+    html, body, #root { height:100%; width:100%; overflow:hidden; font-family:'Plus Jakarta Sans',sans-serif; }
+    ::-webkit-scrollbar { width:3px; } ::-webkit-scrollbar-track { background:transparent; } ::-webkit-scrollbar-thumb { background:rgba(52,211,153,0.22); border-radius:4px; }
+    input, textarea, button { font-family:'Plus Jakarta Sans',sans-serif; }
+    input::placeholder, textarea::placeholder { color:rgba(110,231,183,0.32); }
+    @keyframes fadeUp    { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes fadeIn    { from { opacity:0; } to { opacity:1; } }
+    @keyframes slideRight{ from { transform:translateX(100%); } to { transform:translateX(0); } }
+    @keyframes bounce    { 0%,60%,100% { transform:translateY(0); } 30% { transform:translateY(-7px); } }
+    @keyframes glow      { 0%,100% { box-shadow:0 0 14px rgba(16,185,129,0.4); } 50% { box-shadow:0 0 32px rgba(16,185,129,0.75); } }
+    @keyframes recPulse  { 0%,100% { transform:scale(1); opacity:1; } 50% { transform:scale(0.93); opacity:0.6; } }
+    @keyframes spin      { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+    @keyframes orbFloat  { 0%,100% { transform:translateY(0) scale(1); } 50% { transform:translateY(-18px) scale(1.04); } }
+    @media (max-width:768px) {
+      .sidebar  { width:100% !important; display:${mobileView==="list"?"flex":"none"} !important; }
+      .chatpanel{ display:${mobileView==="chat"?"flex":"none"} !important; }
     }
   `;
 
-  const bgStyle = dark ? {
-    background: "radial-gradient(ellipse at 20% 20%, rgba(99,102,241,0.12) 0%, transparent 50%), radial-gradient(ellipse at 80% 80%, rgba(139,92,246,0.08) 0%, transparent 50%), #08081a",
-  } : {
-    background: "radial-gradient(ellipse at 20% 20%, rgba(99,102,241,0.08) 0%, transparent 50%), radial-gradient(ellipse at 80% 80%, rgba(139,92,246,0.05) 0%, transparent 50%), #eef0ff",
-  };
-
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <>
-      <style>{styles}</style>
+      <style>{css}</style>
       <div style={{
-        height: "100vh", width: "100vw", display: "flex", overflow: "hidden",
-        fontFamily: "'DM Sans', sans-serif", ...bgStyle, position: "relative",
+        height:"100vh", width:"100vw", display:"flex", overflow:"hidden",
+        fontFamily:"'Plus Jakarta Sans',sans-serif",
+        background: dark
+          ? "radial-gradient(ellipse at 15% 20%,rgba(5,150,105,0.1) 0%,transparent 55%),radial-gradient(ellipse at 85% 80%,rgba(20,184,166,0.07) 0%,transparent 55%),#030f0a"
+          : "radial-gradient(ellipse at 15% 20%,rgba(5,150,105,0.07) 0%,transparent 55%),#f0fdf4",
+        position:"relative",
       }}>
-        {/* Ambient orbs */}
-        <div style={{ position: "fixed", top: "10%", left: "5%", width: 400, height: 400, borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.06) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 }} />
-        <div style={{ position: "fixed", bottom: "10%", right: "5%", width: 500, height: 500, borderRadius: "50%", background: "radial-gradient(circle, rgba(139,92,246,0.05) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 }} />
 
-        {/* ── SIDEBAR ── */}
-        <div className="sidebar" style={{
-          width: 340, flexShrink: 0, display: "flex", flexDirection: "column",
-          background: dark ? "rgba(8,8,26,0.7)" : "rgba(240,242,255,0.7)",
-          backdropFilter: "blur(30px)", borderRight: `1px solid ${dark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.07)"}`,
-          position: "relative", zIndex: 10,
-        }}>
-          {/* Sidebar header */}
-          <div style={{ padding: "20px 18px 0", flexShrink: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{
-                  width: 36, height: 36, borderRadius: 12,
-                  background: "green", border: "2px solid rgba(34,197,94,0.5)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  boxShadow: "0 4px 15px rgba(99,102,241,0.4)", animation: "glow 3s ease infinite"
-                }}>
-                  <Zap size={18} color="white" background="white" />
-                </div>
+        {/* Ambient orbs */}
+        <div style={{ position:"fixed", top:"8%", left:"3%", width:480, height:480, borderRadius:"50%", background:"radial-gradient(circle,rgba(5,150,105,0.07) 0%,transparent 70%)", pointerEvents:"none", zIndex:0, animation:"orbFloat 8s ease infinite" }}/>
+        <div style={{ position:"fixed", bottom:"8%", right:"3%", width:380, height:380, borderRadius:"50%", background:"radial-gradient(circle,rgba(20,184,166,0.05) 0%,transparent 70%)", pointerEvents:"none", zIndex:0, animation:"orbFloat 11s ease 2s infinite" }}/>
+
+        {/* ════════════════════════════════════════════════════════════════
+            LEFT PANEL — SIDEBAR
+        ════════════════════════════════════════════════════════════════ */}
+        <div className="sidebar" style={{ width:340, flexShrink:0, display:"flex", flexDirection:"column", background:T.sidebar, backdropFilter:"blur(32px)", borderRight:`1px solid ${T.border}`, position:"relative", zIndex:10 }}>
+
+          {/* Brand */}
+          <div style={{ padding:"20px 18px 0", flexShrink:0 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:18 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:11 }}>
+                <div style={{ width:40, height:40, borderRadius:14, background:"linear-gradient(135deg,#059669,#34d399)", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 18px rgba(16,185,129,0.45)", animation:"glow 3s ease infinite", fontSize:22, fontWeight:800, color:"#022c22", letterSpacing:"-1px" }}>G</div>
                 <div>
-                  <div style={{ fontFamily: "'Sora',sans-serif", fontWeight: 800, fontSize: 17, color: dark ? "rgba(255,255,255,0.95)" : "rgba(0,0,20,0.9)", letterSpacing: "-0.3px" }}> <span className="text-green-500 text-3xl">G</span>-Talk</div>
-                  <div style={{ fontSize: 10, color: "rgba(129,140,248,0.8)", fontWeight: 500 }}>Encrypted · Realtime</div>
+                  <div style={{ fontWeight:800, fontSize:18, color:T.text, letterSpacing:"-0.4px" }}>G<span style={{color:"#34d399"}}>-</span>Chart</div>
+                  <div style={{ fontSize:10, color:"#34d399", fontWeight:500, opacity:0.75 }}>Encrypted · Realtime</div>
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={() => setNotifications(!notifications)} style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, width: 34, height: 34, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.5)" }}>
-                  {notifications ? <Bell size={15} /> : <BellOff size={15} />}
+              <div style={{ display:"flex", gap:6 }}>
+                <button onClick={()=>setNotifications(n=>!n)} style={{ background:T.glass, border:`1px solid ${T.border}`, borderRadius:10, width:34, height:34, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:T.sub }}>
+                  {notifications ? <Bell size={15}/> : <BellOff size={15}/>}
                 </button>
-                <button onClick={() => setDark(!dark)} style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, width: 34, height: 34, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.5)" }}>
-                  {dark ? <Sun size={15} /> : <Moon size={15} />}
+                <button onClick={()=>setDark(d=>!d)} style={{ background:T.glass, border:`1px solid ${T.border}`, borderRadius:10, width:34, height:34, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:T.sub }}>
+                  {dark ? <Sun size={15}/> : <Moon size={15}/>}
                 </button>
               </div>
             </div>
 
-            {/* My mini profile */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: "rgba(129,140,248,0.08)", border: "1px solid rgba(129,140,248,0.15)", borderRadius: 14, marginBottom: 16, backdropFilter: "blur(8px)" }}>
-              <div style={{ width: 36, height: 36, borderRadius: "50%", background: "linear-gradient(135deg, rgba(99,102,241,0.5),rgba(139,92,246,0.3))", border: "2px solid rgba(129,140,248,0.4)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 12, color: "#a5b4fc", fontFamily: "'Sora',sans-serif" }}>YO</div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: dark ? "rgba(255,255,255,0.9)" : "rgba(0,0,20,0.85)", fontFamily: "'Sora',sans-serif" }}>You</div>
-                <div style={{ fontSize: 11, color: "#4ade80", display: "flex", alignItems: "center", gap: 4 }}><StatusDot status="online" size={7} /> Active now</div>
+            {/* My profile pill */}
+            <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 13px", background:T.glass, border:`1px solid ${T.border}`, borderRadius:14, marginBottom:16, backdropFilter:"blur(10px)" }}>
+              <div style={{ width:36, height:36, borderRadius:"50%", background:"linear-gradient(135deg,rgba(5,150,105,0.5),rgba(52,211,153,0.25))", border:"2px solid rgba(52,211,153,0.4)", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700, fontSize:12, color:"#34d399" }}>YO</div>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:13, fontWeight:600, color:T.text }}>You</div>
+                <div style={{ fontSize:11, color:"#34d399", display:"flex", alignItems:"center", gap:4 }}><StatusDot status="online" size={7}/> Active now</div>
               </div>
-              <button style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.3)", display: "flex" }}><Edit3 size={14} /></button>
+              <button style={{ background:"none", border:"none", cursor:"pointer", color:T.muted, display:"flex", padding:0 }}><Edit3 size={14}/></button>
             </div>
 
             {/* Tabs */}
-            <div style={{ display: "flex", gap: 4, marginBottom: 14, background: "rgba(255,255,255,0.04)", borderRadius: 12, padding: 4 }}>
-              {["chats", "groups"].map(tab => (
-                <button key={tab} onClick={() => setSidebarTab(tab)} style={{
-                  flex: 1, padding: "7px 0", borderRadius: 9, border: "none", cursor: "pointer",
-                  background: sidebarTab === tab ? "rgba(129,140,248,0.2)" : "transparent",
-                  color: sidebarTab === tab ? "#a5b4fc" : "rgba(255,255,255,0.35)",
-                  fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 500,
-                  transition: "all 0.2s",
-                }}>{tab.charAt(0).toUpperCase() + tab.slice(1)}</button>
+            <div style={{ display:"flex", gap:4, marginBottom:14, background:T.glass, borderRadius:12, padding:4 }}>
+              {["chats","groups"].map(tab => (
+                <button key={tab} onClick={()=>setSidebarTab(tab)} style={{ flex:1, padding:"7px 0", borderRadius:9, border:"none", cursor:"pointer", background:sidebarTab===tab?"rgba(52,211,153,0.18)":"transparent", color:sidebarTab===tab?"#34d399":T.muted, fontSize:13, fontWeight:500, transition:"all 0.2s" }}>
+                  {tab[0].toUpperCase()+tab.slice(1)}
+                </button>
               ))}
             </div>
 
-            <SearchBar value={search} onChange={setSearch} placeholder="Search people, messages…" />
+            {/* Search */}
+            <div style={{ display:"flex", alignItems:"center", gap:10, background:T.glass, border:`1px solid ${T.border}`, borderRadius:14, padding:"9px 14px", backdropFilter:"blur(8px)" }}>
+              <Search size={15} color={T.muted} strokeWidth={2.5}/>
+              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search people, messages…" style={{ background:"none", border:"none", outline:"none", flex:1, color:T.text, fontSize:13 }}/>
+              {search && <button onClick={()=>setSearch("")} style={{ background:"none", border:"none", cursor:"pointer", color:T.muted, display:"flex", padding:0 }}><X size={13}/></button>}
+            </div>
 
             {/* Filter chips */}
-            <div style={{ display: "flex", gap: 6, marginTop: 12, marginBottom: 4, overflowX: "auto", paddingBottom: 4 }}>
-              {["all", "online", "unread"].map(f => (
-                <button key={f} onClick={() => setFilter(f)} style={{
-                  padding: "5px 12px", borderRadius: 20, border: "none", cursor: "pointer", flexShrink: 0,
-                  background: filter === f ? "linear-gradient(135deg,#6366f1,#8b5cf6)" : "rgba(255,255,255,0.05)",
-                  color: filter === f ? "#fff" : "rgba(255,255,255,0.4)",
-                  fontSize: 11, fontWeight: 500, fontFamily: "'DM Sans',sans-serif",
-                  boxShadow: filter === f ? "0 2px 10px rgba(99,102,241,0.35)" : "none",
-                  transition: "all 0.2s",
-                }}>{f.charAt(0).toUpperCase() + f.slice(1)}</button>
+            <div style={{ display:"flex", gap:6, marginTop:12, marginBottom:4, overflowX:"auto", paddingBottom:4 }}>
+              {["all","online","unread"].map(f => (
+                <button key={f} onClick={()=>setFilter(f)} style={{ padding:"5px 12px", borderRadius:20, border:"none", cursor:"pointer", flexShrink:0, background:filter===f?"linear-gradient(135deg,#059669,#34d399)":T.glass, color:filter===f?"#022c22":T.sub, fontSize:11, fontWeight:filter===f?700:500, boxShadow:filter===f?"0 2px 12px rgba(16,185,129,0.4)":"none", border:filter===f?"none":`1px solid ${T.border}`, transition:"all 0.2s" }}>
+                  {f[0].toUpperCase()+f.slice(1)}
+                </button>
               ))}
             </div>
           </div>
 
-          {/* User List */}
-          <div style={{ flex: 1, overflowY: "auto", padding: "6px 10px 20px" }}>
-            {sidebarTab === "chats" ? (
-              filteredUsers.length === 0 ? (
-                <div style={{ textAlign: "center", color: "rgba(255,255,255,0.25)", marginTop: 40, fontSize: 13 }}>No users found</div>
-              ) : (
-                filteredUsers.map(u => (
-                  <UserCard key={u.id} user={u} active={activeUser?.id === u.id} lastMsg={lastMsgFor(u.id)}
-                    onClick={() => { setActiveUser(u); setShowProfile(false); setMobileView("chat"); }} />
-                ))
-              )
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", marginTop: 60, gap: 12 }}>
-                <div style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(129,140,248,0.1)", border: "1px solid rgba(129,140,248,0.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Hash size={22} color="rgba(129,140,248,0.6)" />
-                </div>
-                <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 13, textAlign: "center" }}>Groups coming soon</div>
-                <button style={{ background: "linear-gradient(135deg,#6366f1,#8b5cf6)", border: "none", borderRadius: 12, padding: "8px 18px", color: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans',sans-serif", display: "flex", alignItems: "center", gap: 6 }}><Plus size={14} /> Create Group</button>
+          {/* User list */}
+          <div style={{ flex:1, overflowY:"auto", padding:"6px 10px 20px" }}>
+
+            {/* Loading state — fetching from backend */}
+            {loadingUsers && sidebarTab==="chats" && (
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", marginTop:60, gap:14 }}>
+                <div style={{ animation:"spin 1s linear infinite", color:"#34d399" }}><Loader size={28}/></div>
+                <div style={{ color:T.muted, fontSize:13, textAlign:"center" }}>Fetching encrypted users from backend…</div>
+                <div style={{ fontSize:11, color:"rgba(52,211,153,0.3)", textAlign:"center", maxWidth:200 }}>Decrypting via /api/decrypt/:id</div>
               </div>
+            )}
+
+            {/* Error state — backend offline */}
+            {usersError && sidebarTab==="chats" && (
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", marginTop:40, gap:12, padding:"0 16px" }}>
+                <div style={{ width:52, height:52, borderRadius:"50%", background:"rgba(220,38,38,0.1)", border:"1px solid rgba(220,38,38,0.25)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <AlertTriangle size={22} color="#f87171"/>
+                </div>
+                <div style={{ color:"#f87171", fontSize:13, fontWeight:600, textAlign:"center" }}>Backend Offline</div>
+                <div style={{ color:T.muted, fontSize:11, textAlign:"center", lineHeight:1.6 }}>{usersError}</div>
+                <div style={{ background:T.glass, border:`1px solid ${T.border}`, borderRadius:10, padding:"8px 12px", fontSize:11, color:"rgba(52,211,153,0.6)", textAlign:"center" }}>
+                  Run: <code style={{color:"#34d399"}}>python main.py</code>
+                </div>
+              </div>
+            )}
+
+            {/* Groups tab */}
+            {sidebarTab==="groups" && (
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", marginTop:60, gap:12 }}>
+                <div style={{ width:56, height:56, borderRadius:"50%", background:T.glass, border:`1px solid ${T.border}`, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <Hash size={22} color="rgba(52,211,153,0.5)"/>
+                </div>
+                <div style={{ color:T.muted, fontSize:13 }}>Groups coming soon</div>
+                <button style={{ background:"linear-gradient(135deg,#059669,#34d399)", border:"none", borderRadius:12, padding:"8px 18px", color:"#022c22", fontSize:12, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}><Plus size={14}/> Create Group</button>
+              </div>
+            )}
+
+            {/* Real users fetched and decrypted from backend */}
+            {!loadingUsers && !usersError && sidebarTab==="chats" && (
+              filteredUsers.length===0
+                ? <div style={{ textAlign:"center", color:T.muted, marginTop:40, fontSize:13 }}>No users found</div>
+                : filteredUsers.map(u => (
+                  <div key={u.id} onClick={()=>selectUser(u)} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", borderRadius:16, cursor:"pointer", marginBottom:2, background:activeUser?.id===u.id?"rgba(52,211,153,0.12)":"transparent", border:activeUser?.id===u.id?`1px solid ${T.borderS}`:"1px solid transparent", backdropFilter:activeUser?.id===u.id?"blur(8px)":"none", transition:"all 0.2s" }}
+                    onMouseEnter={ev=>{if(activeUser?.id!==u.id){ev.currentTarget.style.background="rgba(52,211,153,0.05)";ev.currentTarget.style.border=`1px solid ${T.border}`;}}}
+                    onMouseLeave={ev=>{if(activeUser?.id!==u.id){ev.currentTarget.style.background="transparent";ev.currentTarget.style.border="1px solid transparent";}}}
+                  >
+                    <Avatar user={u} size={48}/>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                        <span style={{ fontWeight:600, fontSize:14, color:T.text }}>{u.name}</span>
+                        <span style={{ fontSize:10, color:T.muted }}>{u.lastSeen}</span>
+                      </div>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:2 }}>
+                        <span style={{ fontSize:12, color:T.muted, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:140 }}>{lastMsgFor(u.id)||u.bio}</span>
+                        {u.unread>0 && <div style={{ background:"linear-gradient(135deg,#059669,#34d399)", color:"#022c22", borderRadius:20, minWidth:20, height:20, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, padding:"0 6px", flexShrink:0 }}>{u.unread}</div>}
+                      </div>
+                      <div style={{ display:"flex", alignItems:"center", gap:4, marginTop:2 }}>
+                        <StatusDot status={u.status} size={7}/>
+                        <span style={{ fontSize:10, color:u.status==="online"?"#34d399":T.muted }}>{u.status}</span>
+                        <span style={{ fontSize:10, color:T.muted, marginLeft:4 }}>• {u.role}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))
             )}
           </div>
 
-          {/* Bottom Nav */}
-          <div style={{ padding: "12px 18px 16px", borderTop: "1px solid rgba(255,255,255,0.05)", display: "flex", justifyContent: "space-around" }}>
-            {[{ icon: MessageCircle, label: "Chats" }, { icon: Users, label: "Contacts" }, { icon: Settings, label: "Settings" }].map(({ icon: Icon, label }) => (
-              <button key={label} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, color: "rgba(255,255,255,0.35)", fontSize: 10, fontFamily: "'DM Sans',sans-serif", padding: "6px 12px", borderRadius: 10, transition: "all 0.2s" }}
-                onMouseEnter={ev => { ev.currentTarget.style.color = "#a5b4fc"; ev.currentTarget.style.background = "rgba(129,140,248,0.08)"; }}
-                onMouseLeave={ev => { ev.currentTarget.style.color = "rgba(255,255,255,0.35)"; ev.currentTarget.style.background = "none"; }}
-              >
-                <Icon size={18} />{label}
-              </button>
+          {/* Bottom nav */}
+          <div style={{ padding:"12px 18px 16px", borderTop:`1px solid ${T.border}`, display:"flex", justifyContent:"space-around" }}>
+            {[[MessageCircle,"Chats"],[Users,"Contacts"],[Settings,"Settings"]].map(([Icon,label]) => (
+              <button key={label} style={{ background:"none", border:"none", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:4, color:T.muted, fontSize:10, padding:"6px 12px", borderRadius:10, transition:"all 0.2s" }}
+                onMouseEnter={ev=>{ev.currentTarget.style.color="#34d399";ev.currentTarget.style.background="rgba(52,211,153,0.08)";}}
+                onMouseLeave={ev=>{ev.currentTarget.style.color=T.muted;ev.currentTarget.style.background="none";}}
+              ><Icon size={18}/>{label}</button>
             ))}
           </div>
         </div>
 
-        {/* ── CHAT PANEL ── */}
-        <div className="chatpanel" style={{
-          flex: 1, display: "flex", flexDirection: "column", position: "relative", overflow: "hidden",
-          background: dark ? "rgba(10,10,28,0.4)" : "rgba(245,247,255,0.4)", backdropFilter: "blur(10px)",
-        }}>
-          {!activeUser ? (
-            /* Empty state */
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, padding: 40 }}>
-              <div style={{ width: 100, height: 100, borderRadius: "50%", background: "linear-gradient(135deg, rgba(99,102,241,0.2), rgba(139,92,246,0.1))", border: "1px solid rgba(129,140,248,0.2)", display: "flex", alignItems: "center", justifyContent: "center", animation: "glow 3s ease infinite" }}>
-                <MessageCircle size={40} color="rgba(129,140,248,0.6)" />
+        {/* ════════════════════════════════════════════════════════════════
+            RIGHT PANEL — CHAT
+        ════════════════════════════════════════════════════════════════ */}
+        <div className="chatpanel" style={{ flex:1, display:"flex", flexDirection:"column", position:"relative", overflow:"hidden", background:T.chat, backdropFilter:"blur(10px)" }}>
+
+          {/* Empty state */}
+          {!activeUser && (
+            <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:20, padding:40, animation:"fadeIn 0.4s ease" }}>
+              <div style={{ width:100, height:100, borderRadius:"50%", background:"linear-gradient(135deg,rgba(5,150,105,0.2),rgba(52,211,153,0.1))", border:`1px solid ${T.borderS}`, display:"flex", alignItems:"center", justifyContent:"center", animation:"glow 3s ease infinite" }}>
+                <MessageCircle size={40} color="rgba(52,211,153,0.6)"/>
               </div>
-              <div style={{ textAlign: "center" }}>
-                <div style={{ fontFamily: "'Sora',sans-serif", fontWeight: 700, fontSize: 22, color: dark ? "rgba(255,255,255,0.85)" : "rgba(0,0,20,0.8)", marginBottom: 8 }}>Select a conversation</div>
-                <div style={{ fontSize: 14, color: "rgba(255,255,255,0.35)", maxWidth: 280 }}>Choose someone from the left to start chatting with end-to-end encryption</div>
+              <div style={{ textAlign:"center" }}>
+                <div style={{ fontWeight:800, fontSize:22, color:T.text, marginBottom:8 }}>Select a conversation</div>
+                <div style={{ fontSize:14, color:T.muted, maxWidth:280, lineHeight:1.6 }}>Choose someone from the left to start chatting with end-to-end encryption</div>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 20, background: "rgba(129,140,248,0.08)", border: "1px solid rgba(129,140,248,0.15)" }}>
-                <Shield size={13} color="rgba(129,140,248,0.7)" />
-                <span style={{ fontSize: 12, color: "rgba(129,140,248,0.7)" }}>All messages encrypted end-to-end</span>
+              <div style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 16px", borderRadius:20, background:T.glass, border:`1px solid ${T.border}` }}>
+                <Shield size={13} color="rgba(52,211,153,0.65)"/>
+                <span style={{ fontSize:12, color:"rgba(52,211,153,0.65)" }}>All messages encrypted end-to-end</span>
               </div>
             </div>
-          ) : (
-            <>
-              {/* Chat Header */}
-              <div style={{
-                display: "flex", alignItems: "center", gap: 12, padding: "14px 20px",
-                background: dark ? "rgba(8,8,26,0.6)" : "rgba(240,242,255,0.6)",
-                backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(255,255,255,0.06)",
-                flexShrink: 0, position: "relative", zIndex: 5
-              }}>
-                {/* Mobile back */}
-                <button onClick={() => setMobileView("list")} className="mobile-back" style={{
-                  display: "none", background: "none", border: "none", cursor: "pointer",
-                  color: "rgba(255,255,255,0.5)", marginRight: 4, "@media(max-width:768px)": { display: "flex" }
-                }}>
-                  <ChevronLeft size={20} />
-                </button>
-
-                <div onClick={() => setShowProfile(!showProfile)} style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer", flex: 1 }}>
-                  <Avatar user={activeUser} size={44} />
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: 15, color: dark ? "rgba(255,255,255,0.95)" : "rgba(0,0,20,0.9)", fontFamily: "'Sora',sans-serif" }}>{activeUser.name}</div>
-                    <div style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 5 }}>
-                      {isTyping ? (
-                        <span style={{ color: "#818cf8", animation: "pulse 1s ease infinite" }}>typing…</span>
-                      ) : (
-                        <>
-                          <StatusDot status={activeUser.status} size={7} />
-                          <span style={{ color: activeUser.status === "online" ? "#4ade80" : "rgba(255,255,255,0.35)" }}>{activeUser.status}</span>
-                          <span style={{ color: "rgba(255,255,255,0.25)" }}>· {activeUser.role}</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", gap: 4 }}>
-                  <button onClick={() => setShowMsgSearch(!showMsgSearch)} style={{ background: showMsgSearch ? "rgba(129,140,248,0.2)" : "rgba(255,255,255,0.05)", border: `1px solid ${showMsgSearch ? "rgba(129,140,248,0.3)" : "rgba(255,255,255,0.08)"}`, borderRadius: 12, width: 38, height: 38, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: showMsgSearch ? "#a5b4fc" : "rgba(255,255,255,0.45)", transition: "all 0.2s" }}>
-                    <Search size={16} />
-                  </button>
-                  {[Phone, Video].map((Icon, i) => (
-                    <button key={i} style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, width: 38, height: 38, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.45)", transition: "all 0.2s" }}
-                      onMouseEnter={ev => ev.currentTarget.style.background = "rgba(99,102,241,0.2)"}
-                      onMouseLeave={ev => ev.currentTarget.style.background = "rgba(255,255,255,0.05)"}
-                    ><Icon size={16} /></button>
-                  ))}
-                  <button onClick={() => setShowProfile(!showProfile)} style={{ background: showProfile ? "rgba(129,140,248,0.2)" : "rgba(255,255,255,0.05)", border: `1px solid ${showProfile ? "rgba(129,140,248,0.3)" : "rgba(255,255,255,0.08)"}`, borderRadius: 12, width: 38, height: 38, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: showProfile ? "#a5b4fc" : "rgba(255,255,255,0.45)" }}>
-                    <MoreVertical size={16} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Message search bar */}
-              {showMsgSearch && (
-                <div style={{ padding: "8px 20px", borderBottom: "1px solid rgba(255,255,255,0.05)", background: "rgba(8,8,26,0.4)", backdropFilter: "blur(10px)", flexShrink: 0 }}>
-                  <SearchBar value={msgSearch} onChange={setMsgSearch} placeholder="Search in conversation…" />
-                </div>
-              )}
-
-              {/* Encryption badge */}
-              <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 4px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 14px", borderRadius: 20, background: "rgba(129,140,248,0.06)", border: "1px solid rgba(129,140,248,0.12)", backdropFilter: "blur(8px)" }}>
-                  <Shield size={11} color="rgba(129,140,248,0.7)" />
-                  <span style={{ fontSize: 11, color: "rgba(129,140,248,0.6)" }}>Messages are encrypted end-to-end</span>
-                </div>
-              </div>
-
-              {/* Messages */}
-              <div ref={chatBodyRef} onScroll={handleScroll} style={{ flex: 1, overflowY: "auto", padding: "10px 20px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
-                {filteredMsgs.length === 0 && msgSearch ? (
-                  <div style={{ textAlign: "center", color: "rgba(255,255,255,0.25)", marginTop: 60, fontSize: 13 }}>No messages found for "{msgSearch}"</div>
-                ) : (
-                  filteredMsgs.map(msg => (
-                    <MessageBubble key={msg.id} msg={msg} user={getUserById(msg.sender)} isMe={msg.sender === "me"} onReact={handleReact} />
-                  ))
-                )}
-                {isTyping && activeUser && <TypingIndicator user={activeUser} />}
-                <div ref={messagesEndRef} />
-              </div>
-
-              {showScrollBtn && <ScrollToBottomBtn onClick={scrollToBottom} />}
-
-              {/* Input Area */}
-              <div style={{
-                padding: "12px 20px 16px", flexShrink: 0,
-                background: dark ? "rgba(8,8,26,0.6)" : "rgba(240,242,255,0.6)",
-                backdropFilter: "blur(20px)", borderTop: "1px solid rgba(255,255,255,0.05)",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <button style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, width: 40, height: 40, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
-                    <Paperclip size={17} />
-                  </button>
-
-                  <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: "10px 16px", backdropFilter: "blur(10px)", transition: "border-color 0.2s" }}>
-                    <input ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
-                      placeholder={`Message ${activeUser.name}…`}
-                      style={{ flex: 1, background: "none", border: "none", outline: "none", color: dark ? "rgba(255,255,255,0.85)" : "rgba(0,0,20,0.8)", fontSize: 14, fontFamily: "'DM Sans',sans-serif" }}
-                    />
-                    <div style={{ position: "relative" }}>
-                      <button onClick={() => setShowEmojiPicker(!showEmojiPicker)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.3)", display: "flex", alignItems: "center", fontSize: 18, padding: 0 }}>😊</button>
-                      {showEmojiPicker && (
-                        <div style={{ position: "absolute", bottom: "100%", right: 0, marginBottom: 8, background: "rgba(15,15,35,0.97)", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, padding: "12px 14px", display: "flex", gap: 8, zIndex: 100, boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}>
-                          {EMOJI_LIST.map(e => (
-                            <button key={e} onClick={() => { setInput(prev => prev + e); setShowEmojiPicker(false); inputRef.current?.focus(); }} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, borderRadius: 8, padding: "4px 6px", transition: "transform 0.15s" }}
-                              onMouseEnter={ev => ev.target.style.transform = "scale(1.3)"}
-                              onMouseLeave={ev => ev.target.style.transform = "scale(1)"}
-                            >{e}</button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Voice / Send */}
-                  {input.trim() ? (
-                    <button onClick={sendMessage} style={{
-                      width: 44, height: 44, borderRadius: "50%", border: "none", cursor: "pointer",
-                      background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      boxShadow: "0 4px 20px rgba(99,102,241,0.5)", transition: "transform 0.15s", flexShrink: 0,
-                    }}
-                      onMouseEnter={ev => ev.currentTarget.style.transform = "scale(1.08)"}
-                      onMouseLeave={ev => ev.currentTarget.style.transform = "scale(1)"}
-                    ><Send size={17} color="#fff" /></button>
-                  ) : (
-                    <button
-                      onMouseDown={() => setIsRecording(true)}
-                      onMouseUp={() => isRecording && sendVoiceNote()}
-                      onMouseLeave={() => setIsRecording(false)}
-                      style={{
-                        width: 44, height: 44, borderRadius: "50%", border: "none", cursor: "pointer",
-                        background: isRecording ? "linear-gradient(135deg,#ef4444,#f97316)" : "rgba(255,255,255,0.07)",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        boxShadow: isRecording ? "0 4px 20px rgba(239,68,68,0.5)" : "none",
-                        transition: "all 0.2s", flexShrink: 0,
-                        animation: isRecording ? "pulse 1s ease infinite" : "none",
-                      }}
-                    ><Mic size={17} color={isRecording ? "#fff" : "rgba(255,255,255,0.5)"} /></button>
-                  )}
-                </div>
-                <div style={{ textAlign: "center", marginTop: 8, fontSize: 10, color: "rgba(255,255,255,0.15)", display: "flex", justifyContent: "center", alignItems: "center", gap: 4 }}>
-                  <Shield size={9} /><span>End-to-end encrypted · G-Talk</span>
-                </div>
-              </div>
-            </>
           )}
 
-          {/* Profile panel overlay */}
-          {showProfile && activeUser && <ProfilePanel user={activeUser} onClose={() => setShowProfile(false)} />}
+          {activeUser && (<>
+
+            {/* Chat header */}
+            <div style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 20px", background:T.header, backdropFilter:"blur(20px)", borderBottom:`1px solid ${T.border}`, flexShrink:0, position:"relative", zIndex:5 }}>
+              <button onClick={()=>setMobileView("list")} style={{ display:"none", background:"none", border:"none", cursor:"pointer", color:T.sub, marginRight:4 }}><ChevronLeft size={20}/></button>
+              <div onClick={()=>setShowProfile(p=>!p)} style={{ display:"flex", alignItems:"center", gap:12, cursor:"pointer", flex:1 }}>
+                <Avatar user={activeUser} size={44}/>
+                <div>
+                  <div style={{ fontWeight:700, fontSize:15, color:T.text }}>{activeUser.name}</div>
+                  <div style={{ fontSize:12, display:"flex", alignItems:"center", gap:5 }}>
+                    {isTyping
+                      ? <span style={{ color:"#34d399", fontStyle:"italic" }}>typing…</span>
+                      : <><StatusDot status={activeUser.status} size={7}/><span style={{color:activeUser.status==="online"?"#34d399":T.muted}}>{activeUser.status}</span><span style={{color:T.muted}}>· {activeUser.role}</span></>
+                    }
+                  </div>
+                </div>
+              </div>
+              <div style={{ display:"flex", gap:4 }}>
+                {[
+                  [Search,  ()=>setShowMsgSearch(p=>!p), showMsgSearch],
+                  [Phone,   ()=>{},                       false],
+                  [Video,   ()=>{},                       false],
+                  [MoreVertical, ()=>setShowProfile(p=>!p), showProfile],
+                ].map(([Icon,fn,active],i) => (
+                  <button key={i} onClick={fn} style={{ background:active?"rgba(52,211,153,0.18)":T.glass, border:`1px solid ${active?T.borderS:T.border}`, borderRadius:12, width:38, height:38, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:active?"#34d399":T.sub, transition:"all 0.2s" }}
+                    onMouseEnter={ev=>ev.currentTarget.style.background="rgba(52,211,153,0.1)"}
+                    onMouseLeave={ev=>ev.currentTarget.style.background=active?"rgba(52,211,153,0.18)":T.glass}
+                  ><Icon size={16}/></button>
+                ))}
+              </div>
+            </div>
+
+            {/* Message search bar */}
+            {showMsgSearch && (
+              <div style={{ padding:"8px 20px", borderBottom:`1px solid ${T.border}`, background:T.header, backdropFilter:"blur(10px)", flexShrink:0 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:10, background:T.glass, border:`1px solid ${T.border}`, borderRadius:14, padding:"9px 14px" }}>
+                  <Search size={15} color={T.muted}/>
+                  <input value={msgSearch} onChange={e=>setMsgSearch(e.target.value)} placeholder="Search in conversation…" style={{ background:"none", border:"none", outline:"none", flex:1, color:T.text, fontSize:13 }}/>
+                  {msgSearch && <button onClick={()=>setMsgSearch("")} style={{ background:"none", border:"none", cursor:"pointer", color:T.muted, display:"flex", padding:0 }}><X size={13}/></button>}
+                </div>
+              </div>
+            )}
+
+            {/* Encryption badge */}
+            <div style={{ display:"flex", justifyContent:"center", padding:"10px 0 4px" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 14px", borderRadius:20, background:T.glass, border:`1px solid ${T.border}`, backdropFilter:"blur(8px)" }}>
+                <Shield size={11} color="rgba(52,211,153,0.55)"/>
+                <span style={{ fontSize:11, color:"rgba(52,211,153,0.5)" }}>Messages are encrypted end-to-end</span>
+              </div>
+            </div>
+
+            {/* Messages */}
+            <div ref={chatBodyRef} onScroll={handleScroll} style={{ flex:1, overflowY:"auto", padding:"10px 20px 16px", display:"flex", flexDirection:"column", gap:14 }}>
+              {filteredMsgs.length===0 && msgSearch
+                ? <div style={{ textAlign:"center", color:T.muted, marginTop:60, fontSize:13 }}>No messages found for "{msgSearch}"</div>
+                : filteredMsgs.map(msg => (
+                    <MessageBubble key={msg.id} msg={msg} user={getUserById(msg.sender)} isMe={msg.sender==="me"} onReact={handleReact}/>
+                  ))
+              }
+              {isTyping && (
+                <div style={{ display:"flex", alignItems:"flex-end", gap:8 }}>
+                  <Avatar user={activeUser} size={30} showStatus={false}/>
+                  <div style={{ background:T.glass, border:`1px solid ${T.border}`, borderRadius:"4px 20px 20px 20px", padding:"10px 14px", display:"flex", alignItems:"center", gap:4, backdropFilter:"blur(10px)" }}>
+                    {[0,1,2].map(i=><div key={i} style={{ width:7, height:7, borderRadius:"50%", background:"#34d399", animation:`bounce 1.1s ease ${i*0.18}s infinite` }}/>)}
+                  </div>
+                  <span style={{ fontSize:11, color:T.muted, marginBottom:4 }}>{activeUser.name} is typing…</span>
+                </div>
+              )}
+              <div ref={messagesEndRef}/>
+            </div>
+
+            {/* Scroll to bottom */}
+            {showScrollBtn && (
+              <button onClick={scrollToBottom} style={{ position:"absolute", bottom:90, right:24, background:"linear-gradient(135deg,#059669,#34d399)", border:"none", borderRadius:"50%", width:40, height:40, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 20px rgba(16,185,129,0.4)", color:"#022c22", zIndex:10, animation:"fadeUp 0.2s ease" }}>
+                <ArrowDown size={16}/>
+              </button>
+            )}
+
+            {/* Input area */}
+            <div style={{ padding:"12px 20px 16px", flexShrink:0, background:T.input, backdropFilter:"blur(20px)", borderTop:`1px solid ${T.border}` }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <button style={{ background:T.glass, border:`1px solid ${T.border}`, borderRadius:12, width:40, height:40, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:T.sub, flexShrink:0, transition:"all 0.2s" }}
+                  onMouseEnter={ev=>ev.currentTarget.style.background="rgba(52,211,153,0.1)"}
+                  onMouseLeave={ev=>ev.currentTarget.style.background=T.glass}
+                ><Paperclip size={17}/></button>
+                <div style={{ flex:1, display:"flex", alignItems:"center", gap:10, background:T.glass, border:`1px solid ${T.border}`, borderRadius:20, padding:"10px 16px", backdropFilter:"blur(10px)" }}>
+                  <input ref={inputRef} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={handleKeyDown}
+                    placeholder={`Message ${activeUser.name}…`}
+                    style={{ flex:1, background:"none", border:"none", outline:"none", color:T.text, fontSize:14 }}
+                  />
+                  <div style={{ position:"relative" }}>
+                    <button onClick={()=>setShowEmojiPicker(p=>!p)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:18, lineHeight:1, padding:0 }}>😊</button>
+                    {showEmojiPicker && (
+                      <div style={{ position:"absolute", bottom:"100%", right:0, marginBottom:8, background:dark?"rgba(3,15,10,0.97)":"rgba(240,253,244,0.97)", backdropFilter:"blur(24px)", border:`1px solid ${T.borderS}`, borderRadius:16, padding:"12px 14px", display:"flex", gap:8, zIndex:100, boxShadow:"0 20px 60px rgba(0,0,0,0.5)" }}>
+                        {EMOJI_LIST.map(e => (
+                          <button key={e} onClick={()=>{setInput(p=>p+e);setShowEmojiPicker(false);inputRef.current?.focus();}} style={{ background:"none", border:"none", cursor:"pointer", fontSize:22, borderRadius:8, padding:"4px 6px", transition:"transform 0.15s" }}
+                            onMouseEnter={ev=>ev.currentTarget.style.transform="scale(1.3)"}
+                            onMouseLeave={ev=>ev.currentTarget.style.transform="scale(1)"}
+                          >{e}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {input.trim()
+                  ? <button onClick={sendMessage} style={{ width:44, height:44, borderRadius:"50%", border:"none", cursor:"pointer", background:"linear-gradient(135deg,#059669,#34d399)", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 20px rgba(16,185,129,0.5)", transition:"transform 0.15s", flexShrink:0 }}
+                      onMouseEnter={ev=>ev.currentTarget.style.transform="scale(1.08)"}
+                      onMouseLeave={ev=>ev.currentTarget.style.transform="scale(1)"}
+                    ><Send size={17} color="#022c22"/></button>
+                  : <button
+                      onMouseDown={()=>setIsRecording(true)}
+                      onMouseUp={()=>{if(isRecording)sendVoiceNote();}}
+                      onMouseLeave={()=>setIsRecording(false)}
+                      style={{ width:44, height:44, borderRadius:"50%", border:isRecording?"none":`1px solid ${T.border}`, cursor:"pointer", background:isRecording?"linear-gradient(135deg,#dc2626,#f87171)":T.glass, display:"flex", alignItems:"center", justifyContent:"center", color:isRecording?"#fff":T.sub, boxShadow:isRecording?"0 4px 20px rgba(220,38,38,0.45)":"none", animation:isRecording?"recPulse 1s ease infinite":"none", transition:"background 0.2s", flexShrink:0 }}
+                    ><Mic size={17}/></button>
+                }
+              </div>
+              <div style={{ textAlign:"center", marginTop:8, fontSize:10, color:"rgba(52,211,153,0.25)", display:"flex", justifyContent:"center", alignItems:"center", gap:4 }}>
+                <Shield size={9}/><span>End-to-end encrypted · G-Chart</span>
+              </div>
+            </div>
+
+            {/* Profile panel overlay */}
+            {showProfile && <ProfilePanel user={activeUser} onClose={()=>setShowProfile(false)} dark={dark}/>}
+
+          </>)}
         </div>
       </div>
     </>
