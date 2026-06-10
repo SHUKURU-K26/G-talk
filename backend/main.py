@@ -1,94 +1,55 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 import json
 import uuid
-import base64
 import os
+import hashlib
+import shutil
 from datetime import datetime
 from cryptography.fernet import Fernet
-from typing import Dict, List, Optional
-import asyncio
+from typing import Dict, List
 
-app = FastAPI(title="G-Talk API")
+app = FastAPI(title="NovaTalk API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ── Uploads folder setup ──────────────────────────────────────────────────────
+UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(UPLOADS_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+
 # ── Encryption Setup ──────────────────────────────────────────────────────────
-FERNET_KEY = os.getenv("FERNET_KEY", Fernet.generate_key())
-fernet = Fernet(FERNET_KEY if isinstance(FERNET_KEY, bytes) else FERNET_KEY.encode())
+FERNET_KEY = os.getenv("FERNET_KEY", "eZVcCVZ6G_1vLw8Bi_zZUP4rPXGPbHnT9XMmH8FrLzE=").encode()
+fernet = Fernet(FERNET_KEY)
 
-def encrypt_payload(data: dict) -> dict:
-    """Encrypt all sensitive fields; expose only 'id' in plaintext."""
-    sensitive = {k: v for k, v in data.items() if k != "id"}
-    encrypted_blob = fernet.encrypt(json.dumps(sensitive).encode()).decode()
-    return {"id": data["id"], "enc": encrypted_blob}
+def encrypt_message(text: str) -> str:
+    return fernet.encrypt(text.encode()).decode()
 
-def decrypt_payload(enc_data: dict) -> dict:
-    """Decrypt the blob and merge with id."""
-    raw = fernet.decrypt(enc_data["enc"].encode())
-    result = json.loads(raw)
-    result["id"] = enc_data["id"]
-    return result
+def decrypt_message(token: str) -> str:
+    return fernet.decrypt(token.encode()).decode()
 
-# ── Mock Users Dictionary ─────────────────────────────────────────────────────
-USERS: Dict[str, dict] = {
-    "u1":  {"id": "u1",  "name": "Aiko Tanaka",      "avatar": "AT", "status": "online",  "role": "Designer",        "color": "#6EE7B7", "bio": "Crafting pixels & dreams", "lastSeen": "now"},
-    "u2":  {"id": "u2",  "name": "Marcus Rivera",    "avatar": "MR", "status": "online",  "role": "Engineer",        "color": "#93C5FD", "bio": "Code is my poetry",        "lastSeen": "now"},
-    "u3":  {"id": "u3",  "name": "Zara Okonkwo",     "avatar": "ZO", "status": "away",    "role": "Product Manager", "color": "#FCA5A5", "bio": "Building the future",      "lastSeen": "5m ago"},
-    "u4":  {"id": "u4",  "name": "Liam Chen",         "avatar": "LC", "status": "online",  "role": "Data Scientist",  "color": "#C4B5FD", "bio": "Turning data into stories","lastSeen": "now"},
-    "u5":  {"id": "u5",  "name": "Sofia Petrov",      "avatar": "SP", "status": "offline", "role": "Marketing",       "color": "#FDE68A", "bio": "Words that move people",   "lastSeen": "2h ago"},
-    "u6":  {"id": "u6",  "name": "Darius Webb",       "avatar": "DW", "status": "online",  "role": "DevOps",          "color": "#6EE7F7", "bio": "Deploying dreams daily",   "lastSeen": "now"},
-    "u7":  {"id": "u7",  "name": "Nia Adeyemi",       "avatar": "NA", "status": "away",    "role": "QA Engineer",     "color": "#F9A8D4", "bio": "Breaking things perfectly","lastSeen": "12m ago"},
-    "u8":  {"id": "u8",  "name": "Ethan Kowalski",    "avatar": "EK", "status": "online",  "role": "Backend Dev",     "color": "#86EFAC", "bio": "APIs are my canvas",       "lastSeen": "now"},
-    "u9":  {"id": "u9",  "name": "Priya Sharma",      "avatar": "PS", "status": "offline", "role": "UX Researcher",   "color": "#FBB6CE", "bio": "Understanding humans",     "lastSeen": "1d ago"},
-    "u10": {"id": "u10", "name": "Kai Nakamura",      "avatar": "KN", "status": "online",  "role": "Frontend Dev",    "color": "#A5F3FC", "bio": "CSS sorcerer",             "lastSeen": "now"},
-    "u11": {"id": "u11", "name": "Amara Diallo",      "avatar": "AD", "status": "away",    "role": "Security",        "color": "#DDD6FE", "bio": "Keeping secrets safe",     "lastSeen": "30m ago"},
-    "u12": {"id": "u12", "name": "Noah Fitzgerald",   "avatar": "NF", "status": "online",  "role": "Architect",       "color": "#FED7AA", "bio": "Designing at scale",       "lastSeen": "now"},
-    "u13": {"id": "u13", "name": "Yuki Shimizu",      "avatar": "YS", "status": "offline", "role": "ML Engineer",     "color": "#BAE6FD", "bio": "Teaching machines to think","lastSeen": "3h ago"},
-}
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
 
-# Current logged-in user (me)
-ME = {"id": "me", "name": "You", "avatar": "YO", "status": "online", "color": "#818CF8"}
 
-# ── In-memory messages store ──────────────────────────────────────────────────
-# Key: frozenset of two user ids → list of messages
-MESSAGES: Dict[str, List[dict]] = {}
+# ── data.json helpers ─────────────────────────────────────────────────────────
+DATA_FILE = os.path.join(os.path.dirname(__file__), "data.json")
 
-def conv_key(a: str, b: str) -> str:
-    return "_".join(sorted([a, b]))
+def load_data() -> dict:
+    with open(DATA_FILE, "r") as f:
+        return json.load(f)
 
-def seed_messages():
-    convos = [
-        ("u1",  [("u1", "Hey! Just finished the new mockups 🎨", "10:02"), ("me", "They look incredible, Aiko!", "10:05"), ("u1", "Thanks! Ready for review when you are", "10:06")]),
-        ("u2",  [("me", "Did the CI pass?", "09:45"), ("u2", "Yes! All 247 tests green 🟢", "09:47"), ("u2", "Deploying to staging now", "09:48")]),
-        ("u4",  [("u4", "Check out this anomaly in the dataset", "Yesterday"), ("me", "Interesting spike around 3PM", "Yesterday"), ("u4", "Exactly — looks like a timezone bug", "Yesterday")]),
-        ("u6",  [("u6", "Infra is fully replicated across 3 zones", "08:30"), ("me", "Perfect. Zero downtime confirmed?", "08:32"), ("u6", "Zero. 99.99% uptime this quarter 🚀", "08:33")]),
-        ("u8",  [("me", "The new endpoint is live", "11:00"), ("u8", "Awesome, rate limiting in place?", "11:02"), ("me", "Yes — 1000 req/min per user", "11:03")]),
-        ("u10", [("u10", "Finally cracked the CSS grid issue!", "Yesterday"), ("me", "The responsive layout looks flawless now", "Yesterday")]),
-        ("u12", [("u12", "System design doc is ready for review", "Mon"), ("me", "Reading it now — brilliant architecture", "Mon"), ("u12", "Appreciate it! Open to feedback", "Mon")]),
-    ]
-    for uid, msgs in convos:
-        key = conv_key("me", uid)
-        MESSAGES[key] = []
-        for sender, text, time in msgs:
-            MESSAGES[key].append({
-                "id": str(uuid.uuid4()),
-                "sender": sender,
-                "text": text,
-                "time": time,
-                "reactions": {},
-                "status": "seen",
-                "type": "text"
-            })
+def save_data(data: dict):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=2)
 
-seed_messages()
 
 # ── WebSocket Connection Manager ──────────────────────────────────────────────
 class ConnectionManager:
@@ -121,81 +82,400 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 # ── REST Endpoints ─────────────────────────────────────────────────────────────
-@app.get("/api/users")
-async def get_users():
-    """Return encrypted user blobs — only 'id' is plaintext."""
-    encrypted_users = [encrypt_payload(u) for u in USERS.values()]
-    return {"users": encrypted_users}
+@app.post("/api/register")
+async def register(payload: dict):
+    data = load_data()
+    phone = payload.get("phone", "").strip()
+    email = payload.get("email", "").strip().lower()
+    username = payload.get("username", "").strip()
 
-@app.get("/api/decrypt/{user_id}")
-async def decrypt_user(user_id: str):
-    """Decrypt a single user by id."""
-    user = USERS.get(user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
+    # Check duplicates
+    for u in data["users"].values():
+        if u["phone"] == phone:
+            raise HTTPException(status_code=400, detail="Phone number already registered")
+        if u["email"] == email:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        if u["username"].lower() == username.lower():
+            raise HTTPException(status_code=400, detail="Username already taken")
 
-@app.get("/api/messages/{other_id}")
-async def get_messages(other_id: str):
-    key = conv_key("me", other_id)
-    msgs = MESSAGES.get(key, [])
-    encrypted = []
-    for m in msgs:
-        enc = fernet.encrypt(json.dumps(m).encode()).decode()
-        encrypted.append({"id": m["id"], "enc": enc})
-    return {"messages": encrypted}
+    user_id = str(uuid.uuid4())
+    colors = ["#6EE7B7","#93C5FD","#FCA5A5","#C4B5FD","#FDE68A","#6EE7F7","#F9A8D4","#86EFAC","#A5F3FC","#DDD6FE"]
+    import random
+    user = {
+        "id": user_id,
+        "fullName": payload.get("fullName", "").strip(),
+        "username": username,
+        "email": email,
+        "phone": phone,
+        "password": hash_password(payload.get("password", "")),
+        "avatar": username[:2].upper(),
+        "color": random.choice(colors),
+        "status": "online",
+        "bio": payload.get("bio", "Hey, I'm on G-Talk!"),
+        "role": "G-Talk User",
+        "lastSeen": "now",
+        "createdAt": datetime.now().isoformat()
+    }
+    data["users"][user_id] = user
+    data["contacts"][user_id] = []
+    save_data(data)
 
-@app.post("/api/messages/{other_id}/decrypt")
-async def decrypt_messages(other_id: str, payload: dict):
-    """Frontend sends list of enc blobs, we decrypt and return."""
+    # Return user without password
+    safe = {k: v for k, v in user.items() if k != "password"}
+    return {"user": safe}
+
+
+@app.post("/api/login")
+async def login(payload: dict):
+    data = load_data()
+    identifier = payload.get("identifier", "").strip()  # phone or username
+    password_hash = hash_password(payload.get("password", ""))
+
+    for u in data["users"].values():
+        if (u["phone"] == identifier or u["username"].lower() == identifier.lower()) and u["password"] == password_hash:
+            u["status"] = "online"
+            save_data(data)
+            safe = {k: v for k, v in u.items() if k != "password"}
+            return {"user": safe}
+
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
+@app.post("/api/logout/{user_id}")
+async def logout(user_id: str):
+    data = load_data()
+    if user_id in data["users"]:
+        data["users"][user_id]["status"] = "offline"
+        data["users"][user_id]["lastSeen"] = datetime.now().strftime("%H:%M")
+        save_data(data)
+    return {"ok": True}
+
+
+@app.get("/api/contacts/{user_id}")
+async def get_contacts(user_id: str):
+    data = load_data()
+    contact_ids = data["contacts"].get(user_id, [])
+    contacts = []
+    for cid in contact_ids:
+        u = data["users"].get(cid)
+        if u:
+            safe = {k: v for k, v in u.items() if k != "password"}
+            contacts.append(safe)
+    return {"contacts": contacts}
+
+
+@app.post("/api/contacts/add")
+async def add_contact(payload: dict):
+    user_id = payload.get("user_id")
+    phone = payload.get("phone", "").strip()
+    data = load_data()
+
+    # Find the target user by phone
+    target = None
+    for u in data["users"].values():
+        if u["phone"] == phone:
+            target = u
+            break
+
+    if not target:
+        raise HTTPException(status_code=404, detail="No G-Talk user found with that phone number")
+
+    if target["id"] == user_id:
+        raise HTTPException(status_code=400, detail="You can't add yourself")
+
+    contacts = data["contacts"].setdefault(user_id, [])
+    if target["id"] in contacts:
+        raise HTTPException(status_code=400, detail="Contact already added")
+
+    contacts.append(target["id"])
+    save_data(data)
+
+    safe = {k: v for k, v in target.items() if k != "password"}
+    safe["name"] = safe.get("fullName", safe.get("username", ""))
+    return {"contact": safe}
+
+
+@app.get("/api/messages/{user_id}/{other_id}")
+async def get_messages(user_id: str, other_id: str):
+    data = load_data()
+    key = "_".join(sorted([user_id, other_id]))
+    msgs = data["messages"].get(key, [])
+    # Decrypt text before sending to frontend
     decrypted = []
-    for item in payload.get("messages", []):
-        raw = fernet.decrypt(item["enc"].encode())
-        decrypted.append(json.loads(raw))
+    for m in msgs:
+        dm = dict(m)
+        if dm.get("type") == "text" and dm.get("text"):
+            try:
+                dm["text"] = decrypt_message(dm["text"])
+            except:
+                pass
+        decrypted.append(dm)
     return {"messages": decrypted}
+
 
 @app.post("/api/send/{other_id}")
 async def send_message(other_id: str, payload: dict):
+    data = load_data()
+    sender_id = payload.get("sender_id", "")
+    text = payload.get("text", "")
+    encrypted_text = encrypt_message(text) if text else ""
+
     msg = {
         "id": str(uuid.uuid4()),
-        "sender": "me",
-        "text": payload.get("text", ""),
+        "sender": sender_id,
+        "text": encrypted_text,
         "time": datetime.now().strftime("%H:%M"),
         "reactions": {},
         "status": "sent",
         "type": payload.get("type", "text"),
     }
-    key = conv_key("me", other_id)
-    MESSAGES.setdefault(key, []).append(msg)
-    # Notify via WebSocket
-    await manager.send_to(other_id, {"event": "new_message", "from": "me", "message": msg})
-    return {"message": msg}
+    key = "_".join(sorted([sender_id, other_id]))
+    data["messages"].setdefault(key, []).append(msg)
+    save_data(data)
+
+    # Return decrypted version to sender
+    msg_out = dict(msg)
+    msg_out["text"] = text
+    await manager.send_to(other_id, {"event": "new_message", "from": sender_id, "message": msg_out})
+    return {"message": msg_out}
+
 
 @app.post("/api/react/{msg_id}")
 async def react_to_message(msg_id: str, payload: dict):
     emoji = payload.get("emoji")
+    user_id = payload.get("user_id")
     other_id = payload.get("other_id")
-    key = conv_key("me", other_id)
-    for msg in MESSAGES.get(key, []):
+    data = load_data()
+    key = "_".join(sorted([user_id, other_id]))
+    for msg in data["messages"].get(key, []):
         if msg["id"] == msg_id:
             reactions = msg.setdefault("reactions", {})
             if emoji in reactions:
                 del reactions[emoji]
             else:
                 reactions[emoji] = True
+            save_data(data)
             return {"reactions": reactions}
     raise HTTPException(status_code=404, detail="Message not found")
 
+
 @app.post("/api/users/{user_id}/status")
 async def update_status(user_id: str, payload: dict):
-    if user_id in USERS:
-        USERS[user_id]["status"] = payload.get("status", "online")
+    data = load_data()
+    if user_id in data["users"]:
+        data["users"][user_id]["status"] = payload.get("status", "online")
+        save_data(data)
     return {"ok": True}
+
+#seen status endpoint
+@app.post("/api/messages/{user_id}/{other_id}/seen")
+async def mark_messages_seen(user_id: str, other_id: str):
+    data = load_data()
+    key = "_".join(sorted([user_id, other_id]))
+    updated = False
+    for msg in data["messages"].get(key, []):
+        if msg["sender"] == other_id and msg["status"] != "seen":
+            msg["status"] = "seen"
+            updated = True
+    if updated:
+        save_data(data)
+        # Notify the sender that their messages were seen
+        await manager.send_to(other_id, {
+            "event": "messages_seen",
+            "by": user_id
+        })
+    return {"ok": True}
+
+@app.post("/api/upload/{other_id}")
+async def upload_file(
+    other_id: str,
+    sender_id: str = Form(...),
+    file: UploadFile = File(...)
+):
+    # Validate file size (10MB max)
+    MAX_SIZE = 10 * 1024 * 1024
+    contents = await file.read()
+    if len(contents) > MAX_SIZE:
+        raise HTTPException(status_code=400, detail="File too large. Max size is 10MB")
+
+    # Validate file type
+    allowed_types = [
+        "image/jpeg", "image/png", "image/gif", "image/webp",
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "video/mp4", "video/webm", "video/quicktime",
+        "audio/webm", "audio/ogg", "audio/mp4", "audio/wav",
+        "audio/mpeg", "audio/webm;codecs=opus", "audio/ogg;codecs=opus"
+    ]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="File type not allowed")
+
+    # Save file with unique name
+    ext = os.path.splitext(file.filename)[1]
+    unique_name = f"{uuid.uuid4()}{ext}"
+    file_path = os.path.join(UPLOADS_DIR, unique_name)
+    with open(file_path, "wb") as f:
+        f.write(contents)
+
+    # Determine file category
+    if file.content_type.startswith("image/"):
+        file_type = "image"
+    elif file.content_type.startswith("video/"):
+        file_type = "video"
+    elif file.content_type.startswith("audio/"):
+        file_type = "voice"
+    else:
+        file_type = "document"
+
+    # Build message
+    msg = {
+        "id": str(uuid.uuid4()),
+        "sender": sender_id,
+        "text": "",
+        "time": datetime.now().strftime("%H:%M"),
+        "reactions": {},
+        "status": "sent",
+        "type": file_type,
+        "fileName": file.filename,
+        "fileSize": len(contents),
+        "fileUrl": f"/uploads/{unique_name}",
+        "mimeType": file.content_type,
+    }
+
+    # Save to data.json
+    data = load_data()
+    key = "_".join(sorted([sender_id, other_id]))
+    data["messages"].setdefault(key, []).append(msg)
+    save_data(data)
+
+    # Notify recipient via WebSocket
+    await manager.send_to(other_id, {
+        "event": "new_message",
+        "from": sender_id,
+        "message": msg
+    })
+
+    return {"message": msg}
+
+# ── Status Endpoints ──────────────────────────────────────────────────────────
+
+@app.post("/api/status")
+async def post_status(
+    user_id: str = Form(...),
+    status_type: str = Form(...),  # "text" or "image"
+    text: str = Form(""),
+    bg_color: str = Form("#059669"),
+    file: UploadFile = File(None)
+):
+    data = load_data()
+    status_id = str(uuid.uuid4())
+    file_url = None
+
+    if status_type == "image" and file:
+        contents = await file.read()
+        if len(contents) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File too large")
+        ext = os.path.splitext(file.filename)[1]
+        unique_name = f"status_{uuid.uuid4()}{ext}"
+        file_path = os.path.join(UPLOADS_DIR, unique_name)
+        with open(file_path, "wb") as f:
+            f.write(contents)
+        file_url = f"/uploads/{unique_name}"
+
+    status = {
+        "id": status_id,
+        "user_id": user_id,
+        "type": status_type,
+        "text": text,
+        "bg_color": bg_color,
+        "file_url": file_url,
+        "created_at": datetime.now().isoformat(),
+        "expires_at": (datetime.now().replace(hour=23, minute=59, second=59)).isoformat(),
+        "views": []
+    }
+
+    data["statuses"].setdefault(user_id, []).append(status)
+    save_data(data)
+    return {"status": status}
+
+
+@app.get("/api/statuses/{user_id}")
+async def get_statuses(user_id: str):
+    data = load_data()
+    contact_ids = data["contacts"].get(user_id, [])
+    # Include own statuses too
+    all_ids = [user_id] + contact_ids
+    now = datetime.now()
+    result = []
+
+    for uid in all_ids:
+        user = data["users"].get(uid)
+        if not user:
+            continue
+        statuses = data["statuses"].get(uid, [])
+        # Filter out expired statuses (older than 24 hours)
+        active = [
+            s for s in statuses
+            if (now - datetime.fromisoformat(s["created_at"])).total_seconds() < 86400
+        ]
+        if active:
+            safe_user = {k: v for k, v in user.items() if k != "password"}
+            safe_user["name"] = safe_user.get("fullName", safe_user.get("username", ""))
+            result.append({
+                "user": safe_user,
+                "statuses": active,
+                "all_seen": all(user_id in s["views"] for s in active)
+            })
+
+    return {"statuses": result}
+
+
+@app.post("/api/status/{status_id}/view")
+async def view_status(status_id: str, payload: dict):
+    viewer_id = payload.get("viewer_id")
+    data = load_data()
+    for uid, statuses in data["statuses"].items():
+        for s in statuses:
+            if s["id"] == status_id:
+                if viewer_id not in s["views"]:
+                    s["views"].append(viewer_id)
+                    save_data(data)
+                return {"views": s["views"]}
+    raise HTTPException(status_code=404, detail="Status not found")
+
+@app.get("/api/status/{status_id}/viewers")
+async def get_status_viewers(status_id: str):
+    data = load_data()
+    for uid, statuses in data["statuses"].items():
+        for s in statuses:
+            if s["id"] == status_id:
+                viewers = []
+                for viewer_id in s.get("views", []):
+                    u = data["users"].get(viewer_id)
+                    if u:
+                        safe = {k: v for k, v in u.items() if k != "password"}
+                        safe["name"] = safe.get("fullName", safe.get("username", ""))
+                        viewers.append(safe)
+                return {"viewers": viewers}
+    raise HTTPException(status_code=404, detail="Status not found")
+
+@app.delete("/api/status/{status_id}")
+async def delete_status(status_id: str, payload: dict):
+    user_id = payload.get("user_id")
+    data = load_data()
+    statuses = data["statuses"].get(user_id, [])
+    data["statuses"][user_id] = [s for s in statuses if s["id"] != status_id]
+    save_data(data)
+    return {"ok": True}
+
+
 
 # ── WebSocket ──────────────────────────────────────────────────────────────────
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(ws: WebSocket, user_id: str):
     await manager.connect(ws, user_id)
+    print(f"[WS] {user_id} connected. Active connections: {list(manager.active.keys())}")
     try:
         while True:
             data = await ws.receive_json()
@@ -210,14 +490,25 @@ async def websocket_endpoint(ws: WebSocket, user_id: str):
 
             elif event == "message_seen":
                 other_id = data.get("from_user")
-                key = conv_key(user_id, other_id)
-                for msg in MESSAGES.get(key, []):
-                    if msg["sender"] == other_id:
+                db = load_data()
+                key = "_".join(sorted([user_id, other_id]))
+                updated = False
+                for msg in db["messages"].get(key, []):
+                    if msg["sender"] == other_id and msg["status"] != "seen":
                         msg["status"] = "seen"
+                        updated = True
+                if updated:
+                    save_data(db)
                 await manager.send_to(other_id, {"event": "messages_seen", "by": user_id})
 
     except WebSocketDisconnect:
         manager.disconnect(user_id)
+        # Mark offline in data.json
+        data = load_data()
+        if user_id in data["users"]:
+            data["users"][user_id]["status"] = "offline"
+            data["users"][user_id]["lastSeen"] = datetime.now().strftime("%H:%M")
+            save_data(data)
         await manager.broadcast({"event": "user_offline", "user_id": user_id})
 
 if __name__ == "__main__":

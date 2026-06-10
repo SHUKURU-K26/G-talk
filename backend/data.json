@@ -1,0 +1,130 @@
+{
+  "users": {
+    "e98728ab-dcc7-4a18-924f-7be2a240fec7": {
+      "id": "e98728ab-dcc7-4a18-924f-7be2a240fec7",
+      "fullName": "Shukuru Kamanzi",
+      "username": "shukuru",
+      "email": "shukuru@gmail.com",
+      "phone": "+250795088463",
+      "password": "6873974c3435908a5e64967440dfe9adbbb5763eb059d563762f936015f28d6a",
+      "avatar": "SH",
+      "color": "#FDE68A",
+      "status": "offline",
+      "bio": "Hey, I'm on G-Talk!",
+      "role": "G-Talk User",
+      "lastSeen": "12:08",
+      "createdAt": "2026-06-10T11:49:14.048725"
+    },
+    "409701b3-e260-42d5-b621-a509e08c30ee": {
+      "id": "409701b3-e260-42d5-b621-a509e08c30ee",
+      "fullName": "Christian Loue",
+      "username": "Christian",
+      "email": "chris@gmail",
+      "phone": "+250788101010",
+      "password": "e59ae67897757d1a138a46c1f501ce94321e96aa7ec4445e0e97e94f2ec6c8e1",
+      "avatar": "CH",
+      "color": "#FDE68A",
+      "status": "offline",
+      "bio": "Hey, I'm on G-Talk!",
+      "role": "G-Talk User",
+      "lastSeen": "12:10",
+      "createdAt": "2026-06-10T11:52:48.620508"
+    }
+  },
+  "messages": {
+    "409701b3-e260-42d5-b621-a509e08c30ee_e98728ab-dcc7-4a18-924f-7be2a240fec7": [
+      {
+        "id": "811ee6ca-99f0-4c60-acd5-8e5041d3d500",
+        "sender": "e98728ab-dcc7-4a18-924f-7be2a240fec7",
+        "text": "gAAAAABqKShLNgjTX__Iqh2UGnFLeWTathkbXF35OCX4K5VkJRdKqkGnpbmVYfsOfyIlXFDK_9ouPpcJbyUd2dmZ4B8gXyYZVA==",
+        "time": "12:03",
+        "reactions": {},
+        "status": "seen",
+        "type": "text"
+      },
+      {
+        "id": "b6c70397-4cc7-44d1-8070-aec0fe476abc",
+        "sender": "409701b3-e260-42d5-b621-a509e08c30ee",
+        "text": "gAAAAABqKSiGwGMsxi_geDN8eZBx5O8nqbWGeWT6jKMqgg46JU8dRuvE4121hydWlM3cCzdF_HBbqyolX3Y2-_wwXuSaSd2cDQ==",
+        "time": "12:04",
+        "reactions": {},
+        "status": "seen",
+        "type": "text"
+      },
+      {
+        "id": "2e8bff3d-e3a9-4144-8bec-a7576463750b",
+        "sender": "e98728ab-dcc7-4a18-924f-7be2a240fec7",
+        "text": "",
+        "time": "12:05",
+        "reactions": {},
+        "status": "seen",
+        "type": "voice",
+        "fileName": "voice_1781082324720.webm",
+        "fileSize": 1262,
+        "fileUrl": "/uploads/25fec7fb-a824-4d15-a17c-87aade0b98e0.webm",
+        "mimeType": "audio/webm;codecs=opus"
+      },
+      {
+        "id": "7436699a-a437-46f6-b267-73c2c4ea2d4c",
+        "sender": "e98728ab-dcc7-4a18-924f-7be2a240fec7",
+        "text": "",
+        "time": "12:05",
+        "reactions": {},
+        "status": "seen",
+        "type": "voice",
+        "fileName": "voice_1781082339688.webm",
+        "fileSize": 2228,
+        "fileUrl": "/uploads/2060cefa-6fd4-48c7-83a9-b394511873e1.webm",
+        "mimeType": "audio/webm;codecs=opus"
+      },
+      {
+        "id": "1256454b-ce1f-42cf-b731-573486ef2e61",
+        "sender": "e98728ab-dcc7-4a18-924f-7be2a240fec7",
+        "text": "",
+        "time": "12:05",
+        "reactions": {},
+        "status": "seen",
+        "type": "voice",
+        "fileName": "voice_1781082346143.webm",
+        "fileSize": 1262,
+        "fileUrl": "/uploads/fe8ae006-b9d1-4663-b2c3-b9f1fb47f982.webm",
+        "mimeType": "audio/webm;codecs=opus"
+      },
+      {
+        "id": "5cec36d4-1c3e-4943-905f-47704a04e08b",
+        "sender": "409701b3-e260-42d5-b621-a509e08c30ee",
+        "text": "gAAAAABqKSlFupALtJwnFvyifn566_UVzldELW-S3fFPZc6UCmdQBXhjafqzR-uXjD9lauDB-vTHqJIaNm3fX8vLOVrd0VIx1Xtb1l7fc_7bQ902xLyoLQobYhVB681IzhBui7HB1syZ",
+        "time": "12:07",
+        "reactions": {},
+        "status": "seen",
+        "type": "text"
+      }
+    ]
+  },
+  "contacts": {
+    "e98728ab-dcc7-4a18-924f-7be2a240fec7": [
+      "409701b3-e260-42d5-b621-a509e08c30ee"
+    ],
+    "409701b3-e260-42d5-b621-a509e08c30ee": [
+      "e98728ab-dcc7-4a18-924f-7be2a240fec7"
+    ]
+  },
+  "statuses": {
+    "e98728ab-dcc7-4a18-924f-7be2a240fec7": [
+      {
+        "id": "fa68cdb7-11fd-4f9c-918b-5f6c8eefeb25",
+        "user_id": "e98728ab-dcc7-4a18-924f-7be2a240fec7",
+        "type": "image",
+        "text": "",
+        "bg_color": "#059669",
+        "file_url": "/uploads/status_53fdb41c-8d36-436c-a3c3-08cefee3ccdb.png",
+        "created_at": "2026-06-10T12:06:18.060454",
+        "expires_at": "2026-06-10T23:59:59.060474",
+        "views": [
+          "409701b3-e260-42d5-b621-a509e08c30ee",
+          "e98728ab-dcc7-4a18-924f-7be2a240fec7"
+        ]
+      }
+    ]
+  }
+}
