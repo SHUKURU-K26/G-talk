@@ -1504,7 +1504,7 @@ function AuthPage({ onAuth }) {
         {/* Footer */}
         <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:6, marginTop:20 }}>
           <Lock size={11} color="rgba(52,211,153,0.4)"/>
-          <span style={{ fontSize:11, color:"rgba(52,211,153,0.4)" }}>End-to-end encrypted · G-Talk</span>
+          <span style={{ fontSize:11, color:"rgba(52,211,153,0.4)" }}>End-to-end encrypted · SK-26 Co-operation</span>
         </div>
       </div>
     </div>
@@ -2302,7 +2302,7 @@ export default function GChart() {
                 </div>
               )}
               <div style={{ textAlign:"center", marginTop:8, fontSize:10, color:"rgba(52,211,153,0.25)", display:"flex", justifyContent:"center", alignItems:"center", gap:4 }}>
-                <Shield size={9}/><span>End-to-end encrypted · G-Talk</span>
+                <Shield size={9}/><span>End-to-end encrypted · SK-26 Co-operation</span>
               </div>
 
             </div>
