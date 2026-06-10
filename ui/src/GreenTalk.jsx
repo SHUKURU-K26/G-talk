@@ -1055,7 +1055,7 @@ function AddContactPanel({ currentUser, onAdd, onChatWith, contacts, T }) {
   });
 
   return (
-    <div style={{ padding:"16px 14px", display:"flex", flexDirection:"column", height:"100%" }}>
+    <div style={{ padding:"16px 14px", display:"flex", flexDirection:"column" }}>
 
       {/* Section title */}
       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16 }}>
@@ -1125,7 +1125,7 @@ function AddContactPanel({ currentUser, onAdd, onChatWith, contacts, T }) {
             {search && <button onClick={()=>setSearch("")} style={{ background:"none", border:"none", cursor:"pointer", color:T.muted, display:"flex", padding:0 }}><X size={12}/></button>}
           </div>
 
-          <div style={{ flex:1, overflowY:"auto" }}>
+          <div style={{ maxHeight:400, overflowY:"auto" }}>
             {filtered.length === 0
               ? <div style={{ textAlign:"center", color:T.muted, fontSize:13, marginTop:20 }}>No contacts found</div>
               : filtered.map(c => (
@@ -1517,8 +1517,14 @@ function AuthPage({ onAuth }) {
 // ══════════════════════════════════════════════════════════════════════════════
 export default function GChart() {
 
-  const [dark, setDark]                   = useState(true);
-  const [currentUser, setCurrentUser]     = useState(null);
+  const [dark, setDark] = useState(true);
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem("gtalk_user");
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
+
   const [users, setUsers]                 = useState([]);
   const [loadingUsers, setLoadingUsers]   = useState(false);
   const [usersError, setUsersError]       = useState(null);
@@ -1803,11 +1809,15 @@ export default function GChart() {
 
   // ── Auth gate ─────────────────────────────────────────────────────────────
   if (!currentUser) {
-    return <AuthPage onAuth={(user) => setCurrentUser(user)} />;
+    return <AuthPage onAuth={(user) => {
+      sessionStorage.setItem("gtalk_user", JSON.stringify(user));
+      setCurrentUser(user);
+    }} />;
   }
   window._openLightbox = (url, name) => setLightbox({ url, name });
   const handleLogout = async () => {
     await apiFetch(`/api/logout/${currentUser.id}`, { method: "POST" });
+    sessionStorage.removeItem("gtalk_user");
     setCurrentUser(null);
     setUsers([]);
     setMessages({});
@@ -1847,6 +1857,10 @@ export default function GChart() {
     @media (max-width:768px) {
       .sidebar  { width:100% !important; display:${mobileView==="list"?"flex":"none"} !important; }
       .chatpanel{ display:${mobileView==="chat"?"flex":"none"} !important; }
+      .backbtn  { display:flex !important; }
+    }
+    @media (min-width:769px) {
+      .backbtn  { display:none !important; }
     }
   `;
 
@@ -2134,7 +2148,7 @@ export default function GChart() {
 
             {/* Chat header */}
             <div style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 20px", background:T.header, backdropFilter:"blur(20px)", borderBottom:`1px solid ${T.border}`, flexShrink:0, position:"relative", zIndex:5 }}>
-              <button onClick={()=>setMobileView("list")} style={{ display:"none", background:"none", border:"none", cursor:"pointer", color:T.sub, marginRight:4 }}><ChevronLeft size={20}/></button>
+              <button onClick={()=>setMobileView("list")} className="backbtn" style={{ display:"none", background:"none", border:"none", cursor:"pointer", color:T.sub, marginRight:4 }}><ChevronLeft size={20}/></button>
               <div onClick={()=>setShowProfile(p=>!p)} style={{ display:"flex", alignItems:"center", gap:12, cursor:"pointer", flex:1 }}>
                 <Avatar user={activeUser} size={44}/>
                 <div>
