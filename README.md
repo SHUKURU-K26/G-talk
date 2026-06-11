@@ -16,13 +16,13 @@
 
 ---
 
-## 📖 Overview
+##  Overview
 
 G-Talk is a full-stack real-time chat application inspired by WhatsApp. It features end-to-end message encryption, real-time messaging via WebSockets, contact management, file sharing, voice notes, and status updates. Built as a demo using a JSON file as a lightweight database, it is designed to be easily migrated to a full SQL database in the future.
 
 ---
 
-## 📸 Screenshots
+##  Screenshots
 
 ### Login
 ![Login](screenshots/Login.png)
@@ -48,9 +48,9 @@ G-Talk is a full-stack real-time chat application inspired by WhatsApp. It featu
 ### FileAttachment
 ![FileAttachment](screenshots/fileAttachment.png)
 
-## ✨ Features
+##  Features
 
-### 🔐 Authentication
+### Authentication
 - **User Registration** — Full name, username, email, phone number with country code selector, and password
 - **User Login** — Sign in with phone number or username
 - **Country Code Selector** — Fetches all world countries with real flag images via REST Countries API, searchable dropdown
@@ -58,7 +58,7 @@ G-Talk is a full-stack real-time chat application inspired by WhatsApp. It featu
 - **Session Persistence** — Login session persists across page refreshes via `sessionStorage`
 - **Secure Logout** — Clears session and marks user as offline
 
-### 💬 Real-Time Messaging
+###  Real-Time Messaging
 - **WebSocket Connection** — Persistent WebSocket connection per user for instant message delivery
 - **Auto Reconnect** — WebSocket automatically reconnects if connection drops
 - **Message Encryption** — All messages encrypted with Fernet symmetric encryption before storage in database
@@ -68,7 +68,7 @@ G-Talk is a full-stack real-time chat application inspired by WhatsApp. It featu
 - **Emoji Reactions** — React to any message with emoji picker
 - **Message Search** — Search through messages within a conversation
 
-### 📎 File Sharing
+###  File Sharing
 - **Image Sharing** — Send JPG, PNG, GIF, WebP images with thumbnail preview
 - **Document Sharing** — Send PDF and Word documents with file type icon and size
 - **Video Sharing** — Send MP4, WebM, QuickTime videos with inline player
@@ -76,7 +76,7 @@ G-Talk is a full-stack real-time chat application inspired by WhatsApp. It featu
 - **10MB File Limit** — Enforced on both frontend and backend
 - **Real-Time File Delivery** — Files arrive instantly via WebSocket to the recipient
 
-### 🎤 Voice Notes
+###  Voice Notes
 - **Hold to Record** — Hold mic button to record, release to send (just like WhatsApp)
 - **Auto Format Detection** — Supports `audio/webm` and `audio/ogg` depending on browser
 - **Real Audio Playback** — Play received voice notes directly in the chat bubble
@@ -84,7 +84,7 @@ G-Talk is a full-stack real-time chat application inspired by WhatsApp. It featu
 - **Max Duration** — Auto stops at 2 minutes
 - **Send Indicator** — Uploading spinner while voice note is being sent
 
-### 👥 Contact Management
+###  Contact Management
 - **WhatsApp-Style Contacts** — Only see users who you have added as contacts
 - **Phone Verification** — When adding a contact, G-Talk checks if that phone number is registered
 - **Instant Add** — Contact appears in your chat list immediately after adding
@@ -92,7 +92,7 @@ G-Talk is a full-stack real-time chat application inspired by WhatsApp. It featu
 - **Click to Chat** — Click any contact in the contacts tab to jump straight to their conversation
 - **Search Contacts** — Search contacts by name or username
 
-### 👁️ Status Updates
+###  Status Updates
 - **Text Statuses** — Post text statuses with 8 custom background colors
 - **Image Statuses** — Post image statuses with optional caption
 - **24-Hour Expiry** — Statuses automatically expire after 24 hours
@@ -104,7 +104,7 @@ G-Talk is a full-stack real-time chat application inspired by WhatsApp. It featu
 - **Unread Indicator** — Green ring around contact avatar for unseen statuses
 - **Updates Tab** — Dedicated tab in the sidebar for browsing all status updates
 
-### 🎨 UI & Experience
+###  UI & Experience
 - **Dark / Light Mode** — Toggle between dark and light themes
 - **Glassmorphism Design** — Beautiful frosted glass UI with green ambient glow
 - **Mobile Responsive** — Full mobile support with back navigation between chat list and chat view
@@ -117,7 +117,7 @@ G-Talk is a full-stack real-time chat application inspired by WhatsApp. It featu
 
 ---
 
-## 🛠 Tech Stack
+##  Tech Stack
 
 ### Frontend
 | Technology | Purpose |
@@ -145,7 +145,7 @@ G-Talk is a full-stack real-time chat application inspired by WhatsApp. It featu
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### Prerequisites
 - Node.js 18+
@@ -205,7 +205,7 @@ Frontend runs at `http://localhost:5173`
 
 ---
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 gtalk/
@@ -278,7 +278,7 @@ WebSocket endpoint: `ws://localhost:8000/ws/{user_id}`
 
 ---
 
-## 🔒 Security
+##  Security
 
 - **Message Encryption** — All messages encrypted with Fernet before writing to `data.json`. Plain text never stored on disk
 - **Password Hashing** — Passwords hashed with SHA-256. Never stored or returned in plain text
@@ -288,7 +288,7 @@ WebSocket endpoint: `ws://localhost:8000/ws/{user_id}`
 
 ---
 
-## ⚠️ Current Limitations (Demo Version)
+##  Current Limitations (Demo Version)
 
 - **JSON Database** — `data.json` is used as a lightweight demo database. Not suitable for production scale. Planned migration to SQLite/PostgreSQL
 - **Ephemeral Storage on Render** — Free tier Render instances reset file storage on restart. Uploaded files and data may be lost on inactivity
@@ -297,7 +297,7 @@ WebSocket endpoint: `ws://localhost:8000/ws/{user_id}`
 
 ---
 
-## 🗺 Roadmap
+##  Roadmap
 
 - [ ] Migrate from `data.json` to SQLite then PostgreSQL
 - [ ] Group chats
@@ -310,19 +310,6 @@ WebSocket endpoint: `ws://localhost:8000/ws/{user_id}`
 - [ ] Message pinning
 - [ ] Multi-device support
 
----
-
-## 👨‍💻 Author
-
-Built with 💚 using React + FastAPI
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
----
 
 <div align="center">
 <strong>G-Talk — Encrypted · Real-time · Private</strong>
