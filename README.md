@@ -46,7 +46,7 @@ G-Talk is a full-stack real-time chat application inspired by WhatsApp. It featu
 ![statusReply](screenshots/statusreply.png)
 
 ### FileAttachment
-![FileAttachment](screenshots/fileAttachment.png)
+![FileAttachment](screenshots/fileattachment.png)
 
 ##  Features
 
